@@ -1396,3 +1396,10 @@ function ReportModal({ zones, onClose, onGenerate }) {
   </script>
 </body>
 </html>
+
+<!-- 核心 sql.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
+
+<!-- httpvfs 讓它支援從網址分塊讀取 -->
+<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite.worker.js"></script>
+<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite-httpvfs.min.js"></script>
