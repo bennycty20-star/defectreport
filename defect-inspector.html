@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- 核心 sql.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
+
+<!-- httpvfs 讓它支援從網址分塊讀取 -->
+<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite.worker.js"></script>
+<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite-httpvfs.min.js"></script>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>◈ DefectInspector</title>
@@ -1395,11 +1401,92 @@ function ReportModal({ zones, onClose, onGenerate }) {
     root.render(<App />);
   </script>
 </body>
+<div id="status">載入資料庫中...</div>
+<div id="result"></div>
+
+<script>
+  // 這整個 function 是 async 的，因為要等網路和 WASM 載入
+  async function initAndQuery() {
+    const status = document.getElementById('status');
+    const resultDiv = document.getElementById('result');
+
+    try {
+      status.textContent = '正在初始化 SQLite 引擎...';
+
+      // === 這裡填你的設定（最關鍵！） ===
+      const config = {
+        from: "httpvfs",
+        config: {
+          // 你的 .sqlite 檔案在 GitHub Pages 的完整網址
+          // 範例：https://benny123.github.io/my-website/data/mydatabase.sqlite
+          url: "https://你的用戶名.github.io/你的repo名稱/你的資料庫檔案名.sqlite",
+
+          // 手動填真實檔案大小（byte） ← 這步超重要，避開 GitHub gzip 問題
+          // 怎麼查？本地用檔案總管看「大小」（不是大小 on disk），或 ls -l
+          fileSize: 你的檔案大小這裡填數字,   // 例如：  5242880   ← 換成你的！
+
+          // pageSize 建議設 1024 或 4096（跟你的 db 一致會更快）
+          pageSize: 4096,
+        }
+      };
+
+      status.textContent = '正在連線到資料庫...';
+
+      // 初始化 httpvfs 版本的 sql.js
+      const SQL = await initSqlJsHttpvfs(config);
+
+      status.textContent = '資料庫已連線！正在查詢...';
+
+      // 開啟資料庫（read-only 模式）
+      const db = new SQL.Database();
+
+      // 執行你的 SQL 查詢（改成你自己的 table 和欄位）
+      const queryResult = db.exec(`
+        SELECT * FROM your_table_name 
+        LIMIT 10;
+      `);
+
+      // 如果有結果，轉成簡單 HTML 表格顯示
+      if (queryResult.length > 0) {
+        const columns = queryResult[0].columns;
+        const rows = queryResult[0].values;
+
+        let tableHtml = '<table border="1" style="border-collapse: collapse;">';
+        tableHtml += '<tr>';
+        columns.forEach(col => {
+          tableHtml += `<th style="padding:8px;">${col}</th>`;
+        });
+        tableHtml += '</tr>';
+
+        rows.forEach(row => {
+          tableHtml += '<tr>';
+          row.forEach(cell => {
+            tableHtml += `<td style="padding:8px;">${cell ?? ''}</td>`;
+          });
+          tableHtml += '</tr>';
+        });
+        tableHtml += '</table>';
+
+        resultDiv.innerHTML = tableHtml;
+      } else {
+        resultDiv.innerHTML = '<p>查無資料，或表格名稱錯誤。</p>';
+      }
+
+      status.textContent = '完成！';
+
+    } catch (error) {
+      console.error('錯誤：', error);
+      status.textContent = '載入失敗：' + error.message;
+      resultDiv.innerHTML = '<pre>' + error.stack + '</pre>';
+    }
+  }
+
+  // 頁面載入完就自動跑（或你可以用按鈕觸發）
+  window.addEventListener('load', initAndQuery);
+  // 或是： document.getElementById('loadBtn').addEventListener('click', initAndQuery);
+</script>
+
+  
 </html>
 
-<!-- 核心 sql.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js"></script>
 
-<!-- httpvfs 讓它支援從網址分塊讀取 -->
-<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite.worker.js"></script>
-<script src="https://unpkg.com/sql.js-httpvfs@0.8.11/dist/sqlite-httpvfs.min.js"></script>
