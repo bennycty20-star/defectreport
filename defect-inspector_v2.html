@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SiteLog — Defect Inspector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body style="margin:0;padding:0;background:#f5f0e8;">
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    /* ─── debounce ─── */
+    const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
+
+    /* ─── storage ─── */
+    const KEY="sitelog_v1";
+    const load=()=>{try{return JSON.parse(localStorage.getItem(KEY));}catch{return null;}};
+    const save=debounce(d=>{try{localStorage.setItem(KEY,JSON.stringify(d));}catch(e){alert("Storage full – please export or remove some photos.");}},500);
+
+    /* ─── constants ─── */
+    const uid=()=>crypto?.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2,11);
+    const pad3=n=>String(n).padStart(3,"0");
+    const today=()=>new Date().toISOString().slice(0,10);
+    const MAX_PHOTOS=5;
+    const STATUS=["Open","In Progress","Resolved","Closed"];
+    const SEVERITY=["Critical","High","Medium","Low","Observation"];
+
+    function zonePrefix(name=""){const w=name.trim().split(/\s+/);return w.length>=2?(w[0][0]+w[1][0]).toUpperCase():name.slice(0,2).toUpperCase();}
+    function nextId(issues,zoneName){const prefix=zonePrefix(zoneName);const last=issues.filter(i=>i.prefix===prefix).reduce((m,i)=>Math.max(m,i.seq??0),0);const seq=last+1;return{prefix,seq,defectId:`${prefix}-${pad3(seq)}`};}
+
+    /* earth-tone palettes */
+    const SC={
+      Critical:{bg:"#fdf0ec",border:"#e8b5a5",text:"#c0533a"},
+      High:    {bg:"#fdf4e7",border:"#e8c98a",text:"#b87333"},
+      Medium:  {bg:"#fdf9ec",border:"#e8d88a",text:"#a08020"},
+      Low:     {bg:"#eef3ee",border:"#b5d4b7",text:"#5a7a5c"},
+      Observation:{bg:"#f0ece4",border:"#c4b89f",text:"#8b5e3c"},
+    };
+    const TC={
+      Open:          {bg:"#fdf0ec",border:"#e8b5a5",text:"#c0533a"},
+      "In Progress": {bg:"#fdf4e7",border:"#e8c98a",text:"#b87333"},
+      Resolved:      {bg:"#eef3ee",border:"#b5d4b7",text:"#5a7a5c"},
+      Closed:        {bg:"#f0ece4",border:"#c4b89f",text:"#8a7660"},
+    };
+    const tc=s=>TC[s]?.text||"#8a7660";
+    const sc=s=>SC[s]?.text||"#8a7660";
+
+    /* ─── image compress ─── */
+    function compressImage(dataUrl,maxW=1400,q=0.82){
+      return new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{const scale=img.width>maxW?maxW/img.width:1;const c=document.createElement("canvas");c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};
+        img.onerror=()=>res(dataUrl);img.src=dataUrl;
+      });
+    }
+
+    /* ─── pin draw ─── */
+    function drawPin(ctx,cx,cy,label,color,scale=1){
+      const r=13*scale;
+      ctx.save();ctx.shadowColor="rgba(0,0,0,.35)";ctx.shadowBlur=6*scale;
+      ctx.beginPath();ctx.arc(cx,cy-r*.35,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+      ctx.strokeStyle="#faf7f2";ctx.lineWidth=2.5*scale;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(cx-r*.38,cy-r*.35+r*.72);ctx.lineTo(cx,cy+r*1.62);ctx.lineTo(cx+r*.38,cy-r*.35+r*.72);ctx.closePath();ctx.fillStyle=color;ctx.fill();ctx.strokeStyle="#faf7f2";ctx.lineWidth=2*scale;ctx.stroke();
+      ctx.restore();ctx.save();ctx.shadowBlur=0;ctx.fillStyle="#faf7f2";ctx.font=`bold ${Math.round(10*scale)}px monospace`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(String(label),cx,cy-r*.35);ctx.restore();
+    }
+
+    /* ─── PDF ─── */
+    function buildPDF(canvases,filename){
+      const toB=u=>{const b=atob(u.split(",")[1]);const a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;};
+      const s2u=s=>{const a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i)&0xff;return a;};
+      const ch=[],wb=u=>{ch.push(u);bl+=u.length;},ws=s=>wb(s2u(s));
+      let bl=0,of=[];const so=id=>{of[id]=bl;ws(id+" 0 obj\n");},eo=()=>ws("endobj\n");
+      const N=canvases.length,iO=i=>3+i*3,cO=i=>4+i*3,pO=i=>5+i*3,nO=3+N*3;
+      ws("%PDF-1.4\n%\x80\x80\x80\x80\n");
+      so(1);ws("<< /Type /Catalog /Pages 2 0 R >>\n");eo();
+      so(2);ws("<< /Type /Pages /Kids ["+Array.from({length:N},(_,i)=>pO(i)+" 0 R").join(" ")+"] /Count "+N+" >>\n");eo();
+      const A4W=595.28,A4H=841.89;
+      for(let i=0;i<N;i++){
+        const jb=toB(canvases[i].toDataURL("image/jpeg",.88)),W=canvases[i].width,H=canvases[i].height;
+        so(iO(i));ws("<< /Type /XObject /Subtype /Image /Width "+W+" /Height "+H+" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+jb.length+" >>\nstream\n");wb(jb);ws("\nendstream\n");eo();
+        const cs=s2u("q "+A4W+" 0 0 "+A4H+" 0 0 cm /Im"+i+" Do Q");
+        so(cO(i));ws("<< /Length "+cs.length+" >>\nstream\n");wb(cs);ws("\nendstream\n");eo();
+        so(pO(i));ws("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "+A4W+" "+A4H+"] /Contents "+cO(i)+" 0 R /Resources << /XObject << /Im"+i+" "+iO(i)+" 0 R >> >> >>\n");eo();
+      }
+      const xp=bl;ws("xref\n0 "+nO+"\n0000000000 65535 f\r\n");
+      for(let id=1;id<nO;id++)ws(String(of[id]||0).padStart(10,"0")+" 00000 n\r\n");
+      ws("trailer\n<< /Size "+nO+" /Root 1 0 R >>\nstartxref\n"+xp+"\n%%EOF\n");
+      const out=new Uint8Array(bl);let p=0;for(const c of ch){out.set(c,p);p+=c.length;}
+      const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([out],{type:"application/pdf"}));a.download=filename;a.click();
+    }
+
+    const PX=2480,PY=3508,SC2=PX/210;
+    const mm=v=>Math.round(v*SC2);
+    const mkCv=()=>{const c=document.createElement("canvas");c.width=PX;c.height=PY;return c;};
+    function pgCtx(cv){const ctx=cv.getContext("2d");ctx.fillStyle="#faf7f2";ctx.fillRect(0,0,PX,PY);return ctx;}
+    const pR=(ctx,x,y,w,h,fill,stroke,lw=.5)=>{if(fill){ctx.fillStyle=fill;ctx.fillRect(mm(x),mm(y),mm(w),mm(h));}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=mm(lw);ctx.strokeRect(mm(x),mm(y),mm(w),mm(h));}};
+    const pT=(ctx,t,x,y,{sz=4,bold=false,color="#2c2416",align="left"}={})=>{ctx.save();ctx.font=`${bold?"bold ":""}${mm(sz)}px Arial,sans-serif`;ctx.fillStyle=color;ctx.textAlign=align;ctx.textBaseline="alphabetic";ctx.fillText(String(t??""),mm(x),mm(y));ctx.restore();};
+    const pL=(ctx,x1,y1,x2,y2,color="#d4c9b5",lw=.4)=>{ctx.save();ctx.strokeStyle=color;ctx.lineWidth=mm(lw);ctx.beginPath();ctx.moveTo(mm(x1),mm(y1));ctx.lineTo(mm(x2),mm(y2));ctx.stroke();ctx.restore();};
+    const pC=(ctx,cx,cy,r,fill)=>{ctx.save();ctx.fillStyle=fill;ctx.beginPath();ctx.arc(mm(cx),mm(cy),mm(r),0,Math.PI*2);ctx.fill();ctx.restore();};
+    const pImg=(ctx,url,x,y,w,h)=>new Promise(res=>{if(!url){res();return;}const i=new Image();i.onload=()=>{try{ctx.drawImage(i,mm(x),mm(y),mm(w),mm(h));}catch{}res();};i.onerror=res;i.src=url;});
+    function wrapT(ctx,text,sz,maxW){ctx.save();ctx.font=`${mm(sz)}px Arial,sans-serif`;const words=String(text).split(" "),lines=[];let line="";for(const w of words){const t=line?line+" "+w:w;if(ctx.measureText(t).width>mm(maxW)&&line){lines.push(line);line=w;}else line=t;}if(line)lines.push(line);ctx.restore();return lines;}
+
+    function annotDraw(imgData,pins){
+      return new Promise(res=>{
+        if(!imgData){res(null);return;}
+        const img=new Image();
+        img.onload=()=>{
+          const cv=document.createElement("canvas");cv.width=Math.max(img.naturalWidth||1200,1);cv.height=Math.max(img.naturalHeight||800,1);
+          const ctx=cv.getContext("2d");ctx.drawImage(img,0,0);const s=cv.width/900;
+          for(const iss of pins){
+            const px=(iss.pinX/100)*cv.width,py=(iss.pinY/100)*cv.height;
+            drawPin(ctx,px,py,iss.seq,tc(iss.status),s);
+            const lx=px+15*s,ly=py-26*s;ctx.save();ctx.font=`bold ${Math.round(9*s)}px monospace`;
+            const tw=ctx.measureText(iss.defectId).width;
+            ctx.fillStyle="rgba(250,247,242,.92)";ctx.fillRect(lx-3*s,ly,tw+10*s,13*s);
+            ctx.strokeStyle=tc(iss.status);ctx.lineWidth=1.5*s;ctx.strokeRect(lx-3*s,ly,tw+10*s,13*s);
+            ctx.fillStyle=tc(iss.status);ctx.textAlign="left";ctx.textBaseline="top";ctx.fillText(iss.defectId,lx+2*s,ly+1*s);ctx.restore();
+          }
+          res(cv.toDataURL("image/jpeg",.88));
+        };
+        img.onerror=()=>res(imgData);img.src=imgData;
+      });
+    }
+
+    function cropThumb(imgData,pinX,pinY,seq,defectId,status){
+      return new Promise(res=>{
+        if(!imgData){res(null);return;}
+        const img=new Image();
+        img.onload=()=>{
+          const iw=img.naturalWidth||800,ih=img.naturalHeight||600,frac=.40,cw=iw*frac,ch=ih*frac;
+          const ox=Math.min(Math.max((pinX/100)*iw-cw/2,0),iw-cw),oy=Math.min(Math.max((pinY/100)*ih-ch/2,0),ih-ch);
+          const cv=document.createElement("canvas");cv.width=420;cv.height=315;
+          const ctx=cv.getContext("2d");ctx.drawImage(img,ox,oy,cw,ch,0,0,420,315);
+          const px=((pinX/100)*iw-ox)/cw*420,py=((pinY/100)*ih-oy)/ch*315,s=420/600;
+          drawPin(ctx,px,py,seq,tc(status),s);
+          const lx=px+14*s,ly=py-26*s;ctx.save();ctx.font=`bold ${Math.round(9*s)}px monospace`;
+          const tw=ctx.measureText(defectId).width;
+          ctx.fillStyle="rgba(250,247,242,.92)";ctx.fillRect(lx-3*s,ly,tw+10*s,13*s);
+          ctx.strokeStyle=tc(status);ctx.lineWidth=1.5*s;ctx.strokeRect(lx-3*s,ly,tw+10*s,13*s);
+          ctx.fillStyle=tc(status);ctx.textAlign="left";ctx.textBaseline="top";ctx.fillText(defectId,lx+2*s,ly+1*s);ctx.restore();
+          res(cv.toDataURL("image/jpeg",.85));
+        };
+        img.onerror=()=>res(null);img.src=imgData;
+      });
+    }
+
+    async function generatePDF({project,zoneId,zones,issues}){
+      const ML=12,MR=12,UW=210-ML-MR;
+      const fz=zoneId?zones.filter(z=>z.id===zoneId):zones;
+      const total=issues.filter(i=>fz.some(z=>z.id===i.zoneId)).length;
+      const pages=[];let ctx,yy;
+      const np=()=>{const cv=mkCv();pages.push(cv);ctx=pgCtx(cv);yy=16;};
+      const cy=n=>{if(yy+n>283)np();};
+      np();
+      pR(ctx,0,0,8,297,"#8b5e3c");pR(ctx,0,294,210,3,"#8b5e3c");
+      pT(ctx,"SITE",ML+14,78,{sz:20,bold:true,color:"#2c2416"});pT(ctx,"LOG",ML+14,100,{sz:20,bold:true,color:"#8b5e3c"});
+      pT(ctx,"DEFECT INSPECTION REPORT",ML+14,117,{sz:5.5,bold:true,color:"#5c4f3a"});
+      pL(ctx,ML+14,123,ML+120,123,"#8b5e3c",.5);
+      [["Project",project.name],["Scope",zoneId?(fz[0]?.name??""):`All Zones (${fz.length})`],["Generated",new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"})],["Total Issues",String(total)]].forEach(([k,v],i)=>{
+        pT(ctx,k,ML+14,138+i*13,{sz:4.5,color:"#8a7660"});pT(ctx,v,ML+55,138+i*13,{sz:4.5,bold:true,color:"#2c2416"});
+      });
+      for(const zone of fz){
+        const zi=issues.filter(i=>i.zoneId===zone.id).sort((a,b)=>a.seq-b.seq),zd=zone.drawings??[];
+        np();pR(ctx,0,0,210,14,"#8b5e3c");
+        pT(ctx,`ZONE: ${zone.name.toUpperCase()}`,ML,9.5,{sz:5.5,bold:true,color:"#faf7f2"});
+        pT(ctx,`${zonePrefix(zone.name)} · ${zi.length} issues`,210-MR,9.5,{sz:4,color:"#f0e6d8",align:"right"});
+        yy=22;
+        const bw=(UW-9)/4;
+        [{l:"TOTAL",v:zi.length,c:"#8b5e3c"},{l:"OPEN",v:zi.filter(i=>i.status==="Open").length,c:"#c0533a"},{l:"IN PROGRESS",v:zi.filter(i=>i.status==="In Progress").length,c:"#b87333"},{l:"RESOLVED",v:zi.filter(i=>["Resolved","Closed"].includes(i.status)).length,c:"#5a7a5c"}].forEach((s,i)=>{
+          const bx=ML+i*(bw+3);pR(ctx,bx,yy,bw,18,"#f0ece4");
+          pT(ctx,String(s.v),bx+bw/2,yy+11,{sz:10,bold:true,color:s.c,align:"center"});
+          pT(ctx,s.l,bx+bw/2,yy+16.5,{sz:3,color:"#8a7660",align:"center"});
+        });yy+=24;
+        for(const drw of zd){
+          if(!drw.imageData)continue;
+          const pinned=zi.filter(i=>i.drawingId===drw.id&&i.pinX!=null);
+          const ann=await annotDraw(drw.imageData,pinned);
+          const asp=await new Promise(r=>{const t=new Image();t.onload=()=>r((t.naturalHeight||600)/Math.max(t.naturalWidth||800,1));t.onerror=()=>r(.56);t.src=drw.imageData;});
+          const imgH=Math.min(Math.max(UW*asp,55),145);
+          cy(imgH+30);pR(ctx,ML,yy,UW,8,"#f0ece4");pR(ctx,ML,yy,3,8,"#8b5e3c");
+          pT(ctx,`DRAWING: ${drw.name.toUpperCase()} · ${pinned.length} pin${pinned.length!==1?"s":""}`,ML+5,yy+5.5,{sz:3.8,bold:true,color:"#5c4f3a"});
+          yy+=10;await pImg(ctx,ann,ML,yy,UW,imgH);pR(ctx,ML,yy,UW,imgH,null,"#8b5e3c",.4);yy+=imgH+3;
+          if(pinned.length>0){
+            cy(7+pinned.length*7.5+4);pR(ctx,ML,yy,UW,7,"#ede8dc");
+            [[ML+3,"#"],[ML+12,"Defect ID"],[ML+34,"Description"],[ML+110,"Severity"],[ML+138,"Status"],[ML+165,"Assignee"]].forEach(([x,t])=>pT(ctx,t,x,yy+4.8,{sz:3.2,bold:true,color:"#8a7660"}));
+            yy+=7;
+            pinned.forEach((iss,i)=>{
+              cy(8);pR(ctx,ML,yy,UW,7.5,i%2===0?"#faf7f2":"#f5f0e8");
+              pC(ctx,ML+4,yy+3.8,2.5,tc(iss.status));
+              pT(ctx,String(iss.seq),ML+4,yy+4.8,{sz:2.8,bold:true,color:"#faf7f2",align:"center"});
+              pT(ctx,iss.defectId||"",ML+12,yy+5,{sz:3.5,bold:true,color:"#8b5e3c"});
+              pT(ctx,(iss.description||"").slice(0,60),ML+34,yy+5,{sz:3.5,color:"#2c2416"});
+              pT(ctx,iss.severity||"",ML+110,yy+5,{sz:3.5,color:sc(iss.severity)});
+              pT(ctx,iss.status||"",ML+138,yy+5,{sz:3.5,color:tc(iss.status)});
+              pT(ctx,(iss.assignee||"—").slice(0,16),ML+165,yy+5,{sz:3.5,color:"#5c4f3a"});
+              yy+=7.5;
+            });yy+=4;
+          }
+        }
+        if(zi.length===0)continue;
+        np();pR(ctx,ML,yy,UW,9,"#f0ece4");pR(ctx,ML,yy,4,9,"#8b5e3c");
+        pT(ctx,`ISSUE DETAILS — ${zone.name.toUpperCase()}`,ML+7,yy+6,{sz:4.5,bold:true,color:"#2c2416"});yy+=14;
+        for(const iss of zi){
+          const CARD=82;cy(CARD+6);
+          pR(ctx,ML,yy,UW,CARD,"#faf7f2");pR(ctx,ML,yy,UW,CARD,null,"#d4c9b5",.3);pR(ctx,ML,yy,4,CARD,tc(iss.status));
+          const CL=ML+7,cy0=yy+9;
+          pT(ctx,iss.defectId||"",CL,cy0,{sz:6,bold:true,color:"#8b5e3c"});
+          pR(ctx,CL+32,cy0-5.5,28,6.5,TC[iss.status]?.bg||"#f0ece4");pT(ctx,iss.status||"",CL+32+14,cy0-1.5,{sz:3,bold:true,color:tc(iss.status),align:"center"});
+          pR(ctx,CL+62,cy0-5.5,28,6.5,SC[iss.severity]?.bg||"#f0ece4");pT(ctx,iss.severity||"",CL+62+14,cy0-1.5,{sz:3,bold:true,color:sc(iss.severity),align:"center"});
+          pT(ctx,`Date: ${iss.date||"—"}`,210-MR-4,cy0-1.5,{sz:3.5,color:"#8a7660",align:"right"});
+          pL(ctx,CL,cy0+2.5,210-MR-4,cy0+2.5,"#d4c9b5",.3);
+          const RY=cy0+5,DW=66,DH=52,PW=48,PH=52,PX2=CL+DW+4,TX=PX2+PW+5,TW=UW-(TX-ML)-2;
+          const issD=zd.find(d=>d.id===iss.drawingId);
+          if(issD?.imageData&&iss.pinX!=null){const th=await cropThumb(issD.imageData,iss.pinX,iss.pinY,iss.seq,iss.defectId,iss.status);if(th){await pImg(ctx,th,CL,RY,DW,DH);}pR(ctx,CL,RY,DW,DH,null,"#8b5e3c",.4);}
+          else{pR(ctx,CL,RY,DW,DH,"#f0ece4");pT(ctx,"No pin",CL+DW/2,RY+DH/2,{sz:3.5,color:"#c4b89f",align:"center"});}
+          const photos=(iss.photos||[]);
+          if(photos[0]){await pImg(ctx,photos[0],PX2,RY,PW,PH);pR(ctx,PX2,RY,PW,PH,null,"#d4c9b5",.3);}
+          else{pR(ctx,PX2,RY,PW,PH,"#f0ece4");pT(ctx,"No photo",PX2+PW/2,RY+PH/2,{sz:3.5,color:"#c4b89f",align:"center"});}
+          let dy=RY+1;
+          const pF=(label,val)=>{if(!val)return;pT(ctx,label.toUpperCase(),TX,dy,{sz:3,bold:true,color:"#c4b89f"});dy+=4;wrapT(ctx,String(val).slice(0,200),3.5,TW).slice(0,5).forEach(ln=>{pT(ctx,ln,TX,dy,{sz:3.5,color:"#2c2416"});dy+=4.2;});dy+=1.5;};
+          pF("Description",iss.description);pF("Location",iss.location);pF("Assigned To",iss.assignee);pF("Notes",iss.notes);
+          yy+=CARD+5;
+        }yy+=4;
+      }
+      const sn=s=>(s||"").replace(/[^a-zA-Z0-9_-]/g,"_").slice(0,40);
+      buildPDF(pages,`${sn(project.name)}_Defect_${zoneId?sn(fz[0]?.name):"AllZones"}.pdf`);
+    }
+
+    /* ════ SHARED UI ════ */
+    function Btn({variant="primary",size="md",onClick,disabled,children,style={}}){
+      const base={display:"inline-flex",alignItems:"center",gap:5,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontFamily:"'DM Sans',sans-serif",transition:"all .15s",borderRadius:8,opacity:disabled?.45:1,whiteSpace:"nowrap"};
+      const sz={sm:{fontSize:12,padding:"5px 12px"},md:{fontSize:13,padding:"8px 17px"},lg:{fontSize:14,padding:"11px 22px"}};
+      const v={
+        primary:{background:"#8b5e3c",color:"#faf7f2"},
+        secondary:{background:"#f2ede3",color:"#5c4f3a",border:"1px solid #d4c9b5"},
+        ghost:{background:"transparent",color:"#8a7660",border:"1px solid #d4c9b5"},
+        danger:{background:"#fdf0ec",color:"#c0533a",border:"1px solid #e8b5a5"},
+        success:{background:"#eef3ee",color:"#5a7a5c",border:"1px solid #b5d4b7"},
+      };
+      return <button style={{...base,...sz[size],...v[variant],...style}} onClick={onClick} disabled={disabled}>{children}</button>;
+    }
+
+    function Badge({sev,stat,children}){
+      const t=sev?SC[sev]:stat?TC[stat]:null;
+      if(!t)return <span>{children}</span>;
+      return <span style={{display:"inline-flex",alignItems:"center",gap:3,padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:600,background:t.bg,color:t.text,border:`1px solid ${t.border}`}}>{children}</span>;
+    }
+
+    function Dot({status,size=7}){return <span style={{display:"inline-block",width:size,height:size,borderRadius:"50%",background:tc(status),flexShrink:0}}/>;}
+
+    function ModalHdr({title,onClose}){
+      return <div style={{display:"flex",alignItems:"center",marginBottom:18}}>
+        <h2 style={{fontFamily:"'Fraunces',serif",fontSize:17,fontWeight:700,color:"#2c2416",letterSpacing:"-.01em"}}>{title}</h2>
+        <button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",color:"#8a7660",fontSize:20,cursor:"pointer",width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8}}>✕</button>
+      </div>;
+    }
+
+    /* ════ APP ROOT ════ */
+    function App(){
+      const [db,setDb]=useState(()=>load()??{projects:[]});
+      const [page,setPage]=useState("home");
+      const [projId,setProjId]=useState(null);
+      const [zoneId,setZoneId]=useState(null);
+      const [issId,setIssId]=useState(null);
+      const [modal,setModal]=useState(null);
+      const [toast,setToast]=useState(null);
+      const [pdfBusy,setPdfBusy]=useState(false);
+      useEffect(()=>{save(db);},[db]);
+      const flash=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3200);};
+      const proj=db.projects.find(p=>p.id===projId);
+      const zones=proj?.zones??[];
+      const zone=zones.find(z=>z.id===zoneId);
+      const allIss=proj?.issues??[];
+      const zIss=allIss.filter(i=>i.zoneId===zoneId);
+      const issue=allIss.find(i=>i.id===issId);
+      const mutP=(id,fn)=>setDb(d=>({...d,projects:d.projects.map(p=>p.id===id?fn(p):p)}));
+      const addProject=name=>{setDb(d=>({...d,projects:[...d.projects,{id:uid(),name,zones:[],issues:[],createdAt:today()}]}));flash(`"${name}" created`);};
+      const addZone=name=>{mutP(projId,p=>({...p,zones:[...p.zones,{id:uid(),name,drawings:[],createdAt:today()}]}));flash("Zone added");};
+      const addDrawing=(name,img)=>{mutP(projId,p=>({...p,zones:p.zones.map(z=>z.id===zoneId?{...z,drawings:[...(z.drawings??[]),{id:uid(),name,imageData:img,zoneId,createdAt:today()}]}:z)}));flash("Drawing uploaded");};
+      const addIssue=fields=>{const{prefix,seq,defectId}=nextId(allIss,zone.name);const iss={id:uid(),prefix,seq,defectId,zoneId,date:today(),status:"Open",photos:[],...fields};mutP(projId,p=>({...p,issues:[...(p.issues??[]),iss]}));flash(`${defectId} created`);return iss;};
+      const updIssue=(id,fields)=>mutP(projId,p=>({...p,issues:p.issues.map(i=>i.id===id?{...i,...fields}:i)}));
+      const delIssue=id=>{mutP(projId,p=>({...p,issues:p.issues.filter(i=>i.id!==id)}));flash("Issue deleted","err");};
+      const placePin=(id,pinX,pinY,drawingId)=>{updIssue(id,{pinX,pinY,drawingId});flash("Pin saved ✓");};
+      const delProject=id=>{setDb(d=>({...d,projects:d.projects.filter(p=>p.id!==id)}));flash("Project deleted","err");};
+      const goHome=()=>{setPage("home");setProjId(null);setZoneId(null);};
+      const goProject=id=>{setProjId(id);setPage("project");setZoneId(null);};
+      const goZone=id=>{setZoneId(id);setPage("zone");};
+      const goIssue=id=>{setIssId(id);setPage("issue");};
+      const doPdf=async zid=>{setPdfBusy(true);try{await generatePDF({project:proj,zoneId:zid,zones,issues:allIss});flash("PDF exported ✓");}catch(e){flash("PDF error: "+e.message,"err");}finally{setPdfBusy(false);};};
+
+      return (
+        <div style={{fontFamily:"'DM Sans',sans-serif",background:"#f5f0e8",minHeight:"100vh",color:"#2c2416"}}>
+          <style>{`
+            *, *::before, *::after{box-sizing:border-box;margin:0;padding:0;}
+            ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:#ede8dc}::-webkit-scrollbar-thumb{background:#c4b89f;border-radius:4px}
+            input,textarea,select{font-family:'DM Sans',sans-serif;}
+            input:focus,textarea:focus,select:focus{outline:none;border-color:#8b5e3c!important;box-shadow:0 0 0 3px rgba(139,94,60,.14)!important;}
+            .card{background:#faf7f2;border:1px solid #d4c9b5;border-radius:12px;box-shadow:0 1px 3px rgba(44,36,22,.07),0 4px 14px rgba(44,36,22,.05);}
+            .hovcard{transition:border-color .15s,box-shadow .15s,transform .15s;cursor:pointer;}
+            .hovcard:hover{border-color:#a67c52;box-shadow:0 4px 16px rgba(44,36,22,.13);transform:translateY(-1px);}
+            .inp{background:#faf7f2;border:1px solid #d4c9b5;border-radius:8px;padding:10px 13px;color:#2c2416;font-size:13.5px;width:100%;outline:none;transition:border-color .15s;}
+            .lbl{font-size:11px;font-weight:700;color:#8b5e3c;letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px;display:block;}
+            .modal-bg{position:fixed;inset:0;background:rgba(44,36,22,.4);z-index:200;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);}
+            .modal{background:#faf7f2;border:1px solid #d4c9b5;border-radius:18px 18px 0 0;width:100%;max-width:680px;max-height:93vh;overflow-y:auto;padding:22px 18px;box-shadow:0 -8px 40px rgba(44,36,22,.15);}
+            @media(min-width:640px){.modal-bg{align-items:center}.modal{border-radius:16px;padding:26px 24px;}}
+            .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;background:#f2ede3;border:1px solid #d4c9b5;font-size:12px;font-weight:600;color:#5c4f3a;cursor:pointer;transition:all .13s;white-space:nowrap;}
+            .chip:hover{border-color:#a67c52;color:#8b5e3c;}
+            @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+            @keyframes slideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+            .anim{animation:fadeUp .2s ease;}
+            .slanim{animation:slideUp .22s ease;}
+            /* ── Mobile ── */
+            @media(max-width:480px){
+              .stat-grid{grid-template-columns:repeat(2,1fr)!important;}
+              .pg-hdr{flex-wrap:wrap;}
+              .pg-hdr h1{font-size:17px!important;}
+              .photo-grid{grid-template-columns:repeat(2,1fr)!important;}
+              .row-actions{flex-direction:column;align-items:flex-start!important;gap:6px!important;}
+              .row-actions select{width:100%;}
+              .breadcrumb{max-width:120px;overflow:hidden;text-overflow:ellipsis;}
+              .issue-grid{grid-template-columns:1fr!important;}
+            }
+            @media(max-width:360px){
+              .stat-grid{grid-template-columns:repeat(2,1fr)!important;}
+            }
+          `}</style>
+
+          {/* ── NAV ── */}
+          <nav style={{background:"#faf7f2",borderBottom:"1px solid #d4c9b5",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 8px rgba(44,36,22,.06)"}}>
+            <div style={{maxWidth:980,margin:"0 auto",padding:"0 16px",height:52,display:"flex",alignItems:"center",gap:8}}>
+              <span onClick={goHome} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:7,flexShrink:0,textDecoration:"none"}}>
+                <span style={{width:30,height:30,borderRadius:9,background:"#8b5e3c",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,color:"#faf7f2",fontWeight:700,fontFamily:"'DM Mono'"}}>S</span>
+                <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,fontSize:17,color:"#2c2416",letterSpacing:"-.01em"}}>SiteLog</span>
+              </span>
+              <div style={{flex:1,display:"flex",alignItems:"center",gap:4,overflowX:"auto",padding:"0 4px",scrollbarWidth:"none"}}>
+                {proj&&<><span style={{color:"#c4b89f",fontSize:14}}>›</span><button className="chip breadcrumb" onClick={()=>goProject(projId)}>{proj.name}</button></>}
+                {zone&&<><span style={{color:"#c4b89f",fontSize:14}}>›</span><button className="chip breadcrumb" onClick={()=>goZone(zoneId)}>{zone.name}</button></>}
+                {issue&&<><span style={{color:"#c4b89f",fontSize:14}}>›</span><span style={{fontSize:12,fontWeight:700,color:"#8b5e3c",fontFamily:"'DM Mono'"}}>{issue.defectId}</span></>}
+              </div>
+              {proj&&<Btn size="sm" variant="success" disabled={pdfBusy} onClick={()=>setModal({type:"report"})}>{pdfBusy?"⏳…":"↓ PDF"}</Btn>}
+            </div>
+          </nav>
+
+          {/* ── PAGES ── */}
+          <div style={{maxWidth:980,margin:"0 auto",padding:"20px 16px"}}>
+            {page==="home"    &&<HomePage    projects={db.projects} onSelect={goProject} onAdd={()=>setModal({type:"newProject"})} onDelete={delProject}/>}
+            {page==="project" &&proj&&<ProjectPage project={proj} zones={zones} issues={allIss} onZone={goZone} onAddZone={()=>setModal({type:"newZone"})}/>}
+            {page==="zone"    &&zone&&<ZonePage zone={zone} issues={zIss} onIssue={goIssue} onAddIssue={()=>setModal({type:"newIssue"})} onAddDrawing={()=>setModal({type:"newDrawing"})} onStatusChange={(id,s)=>updIssue(id,{status:s})} onPin={placePin}/>}
+            {page==="issue"   &&issue&&zone&&<IssuePage issue={issue} zone={zone} drawings={zone.drawings??[]} onEdit={f=>{updIssue(issue.id,f);flash("Saved");}} onDelete={()=>{delIssue(issue.id);setPage("zone");}} onBack={()=>setPage("zone")} onPin={placePin} onStatusChange={s=>updIssue(issue.id,{status:s})}/>}
+          </div>
+
+          {/* ── MODALS ── */}
+          {modal?.type==="newProject"&&<TextModal title="New Project" hint='e.g. "Marina Tower Block A"' placeholder="Project name" onClose={()=>setModal(null)} onSave={v=>{addProject(v);setModal(null);}}/>}
+          {modal?.type==="newZone"   &&<TextModal title="New Zone" hint='"Zone A"→ZA  "Lobby"→LO  "Block B"→BB' placeholder="Zone name" onClose={()=>setModal(null)} onSave={v=>{addZone(v);setModal(null);}}/>}
+          {modal?.type==="newDrawing"&&<DrawingModal onClose={()=>setModal(null)} onSave={(n,img)=>{addDrawing(n,img);setModal(null);}}/>}
+          {modal?.type==="newIssue"  &&<IssueModal title="New Issue" drawings={zone?.drawings??[]} onClose={()=>setModal(null)} onSave={f=>{addIssue(f);setModal(null);}}/>}
+          {modal?.type==="report"    &&<ReportModal zones={zones} onClose={()=>setModal(null)} onGenerate={async zid=>{setModal(null);await doPdf(zid||null);}}/>}
+
+          {/* ── TOAST ── */}
+          {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#fdf0ec":"#eef3ee",color:toast.type==="err"?"#c0533a":"#5a7a5c",border:`1px solid ${toast.type==="err"?"#e8b5a5":"#b5d4b7"}`,padding:"10px 22px",borderRadius:24,fontWeight:600,fontSize:13,zIndex:400,boxShadow:"0 4px 24px rgba(44,36,22,.18)",whiteSpace:"nowrap",animation:"slideUp .2s ease"}}>
+            {toast.type==="err"?"⚠":"✓"} {toast.msg}
+          </div>}
+        </div>
+      );
+    }
+
+    /* ════ HOME ════ */
+    function HomePage({projects,onSelect,onAdd,onDelete}){
+      return (
+        <div className="anim">
+          <div style={{display:"flex",alignItems:"flex-start",marginBottom:24,gap:12,flexWrap:"wrap"}}>
+            <div>
+              <h1 style={{fontFamily:"'Fraunces',serif",fontSize:27,fontWeight:700,color:"#2c2416",letterSpacing:"-.02em"}}>Projects</h1>
+              <p style={{color:"#8a7660",fontSize:13,marginTop:3}}>{projects.length} project{projects.length!==1?"s":""} · SiteLog Inspector</p>
+            </div>
+            <Btn style={{marginLeft:"auto"}} onClick={onAdd}>+ New Project</Btn>
+          </div>
+          {projects.length===0?(
+            <div className="card" style={{padding:"56px 24px",textAlign:"center"}}>
+              <div style={{fontSize:52,marginBottom:14}}>🏗️</div>
+              <p style={{fontFamily:"'Fraunces',serif",fontSize:19,color:"#5c4f3a",marginBottom:6}}>No projects yet</p>
+              <p style={{color:"#8a7660",fontSize:13,marginBottom:22}}>Create your first project to start logging site defects.</p>
+              <Btn onClick={onAdd}>Create First Project</Btn>
+            </div>
+          ):projects.map(p=>(
+            <div key={p.id} className="card hovcard" style={{padding:"14px 16px",marginBottom:8,display:"flex",alignItems:"center",gap:12}} onClick={()=>onSelect(p.id)}>
+              <div style={{width:42,height:42,borderRadius:10,background:"#f0e6d8",border:"1px solid #c4b89f",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>🏢</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:14,color:"#2c2416"}}>{p.name}</div>
+                <div style={{color:"#8a7660",fontSize:12,marginTop:2}}>{(p.zones||[]).length} zones · {(p.issues||[]).length} issues · {p.createdAt}</div>
+              </div>
+              <Btn size="sm" variant="danger" style={{flexShrink:0}} onClick={e=>{e.stopPropagation();if(confirm("Delete this project?"))onDelete(p.id);}}>✕</Btn>
+              <span style={{color:"#c4b89f",fontSize:18}}>›</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    /* ════ PROJECT ════ */
+    function ProjectPage({project,zones,issues,onZone,onAddZone}){
+      const stats=[{l:"Total",v:issues.length,c:"#8b5e3c"},{l:"Open",v:issues.filter(i=>i.status==="Open").length,c:"#c0533a"},{l:"In Progress",v:issues.filter(i=>i.status==="In Progress").length,c:"#b87333"},{l:"Resolved",v:issues.filter(i=>["Resolved","Closed"].includes(i.status)).length,c:"#5a7a5c"}];
+      return (
+        <div className="anim">
+          <div className="pg-hdr" style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:20}}>
+            <div>
+              <h1 style={{fontFamily:"'Fraunces',serif",fontSize:22,fontWeight:700,letterSpacing:"-.02em"}}>{project.name}</h1>
+              <p style={{color:"#8a7660",fontSize:12,marginTop:2}}>{zones.length} zones · {issues.length} issues</p>
+            </div>
+            <Btn style={{marginLeft:"auto",flexShrink:0}} onClick={onAddZone}>+ Zone</Btn>
+          </div>
+          <div className="stat-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:20}}>
+            {stats.map(s=>(
+              <div key={s.l} className="card" style={{padding:"14px 10px",textAlign:"center"}}>
+                <div style={{fontFamily:"'Fraunces',serif",fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div>
+                <div style={{fontSize:10,color:"#8a7660",marginTop:3,textTransform:"uppercase",letterSpacing:".06em",fontWeight:600}}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+          <p style={{fontSize:11,fontWeight:700,color:"#8b5e3c",textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Zones</p>
+          {zones.length===0?<div className="card" style={{padding:32,textAlign:"center"}}><p style={{color:"#8a7660"}}>No zones yet.</p></div>
+           :zones.map(z=>{const zi=issues.filter(i=>i.zoneId===z.id);const open=zi.filter(i=>i.status==="Open").length;return(
+            <div key={z.id} className="card hovcard" style={{padding:"12px 16px",marginBottom:7,display:"flex",alignItems:"center",gap:12}} onClick={()=>onZone(z.id)}>
+              <div style={{width:38,height:38,borderRadius:9,background:"#f0e6d8",border:"1px solid #c4b89f",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12,color:"#8b5e3c",flexShrink:0,fontFamily:"'DM Mono'"}}>{zonePrefix(z.name)}</div>
+              <div style={{flex:1}}><div style={{fontWeight:600}}>{z.name}</div><div style={{color:"#8a7660",fontSize:12,marginTop:1}}>{(z.drawings||[]).length} drawings · {zi.length} issues</div></div>
+              {open>0&&<Badge stat="Open">{open} open</Badge>}
+              <span style={{color:"#c4b89f"}}>›</span>
+            </div>
+          );})}
+        </div>
+      );
+    }
+
+    /* ════ ZONE ════ */
+    function ZonePage({zone,issues,onIssue,onAddIssue,onAddDrawing,onStatusChange,onPin}){
+      const [tab,setTab]=useState("map");
+      const [actDid,setActDid]=useState(null);
+      const [pinM,setPinM]=useState(null);
+      const drawings=zone.drawings??[];
+      const curDrw=drawings.find(d=>d.id===actDid)??drawings[0]??null;
+      const drwIss=curDrw?issues.filter(i=>i.drawingId===curDrw.id):[];
+      const unpinned=issues.filter(i=>i.pinX==null);
+      return (
+        <div className="anim">
+          <div className="pg-hdr" style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <h1 style={{fontFamily:"'Fraunces',serif",fontSize:20,fontWeight:700,letterSpacing:"-.02em"}}>{zone.name}</h1>
+              <p style={{color:"#8a7660",fontSize:12,marginTop:2}}>
+                Prefix <span style={{fontFamily:"'DM Mono'",fontWeight:600,color:"#8b5e3c"}}>{zonePrefix(zone.name)}</span>
+                {" · "}{issues.length} issue{issues.length!==1?"s":""}
+                {unpinned.length>0&&<span style={{color:"#b87333"}}> · {unpinned.length} unplaced</span>}
+              </p>
+            </div>
+            <Btn size="sm" variant="ghost" onClick={onAddDrawing}>+ Drawing</Btn>
+            <Btn size="sm" onClick={onAddIssue}>+ Issue</Btn>
+          </div>
+          <div style={{display:"flex",gap:2,background:"#ede8dc",borderRadius:10,padding:3,width:"fit-content",marginBottom:14,border:"1px solid #d4c9b5"}}>
+            {["map","list"].map(t=>(
+              <button key={t} onClick={()=>{setTab(t);setPinM(null);}} style={{padding:"6px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:12,background:t===tab?"#faf7f2":"transparent",color:t===tab?"#2c2416":"#8a7660",boxShadow:t===tab?"0 1px 4px rgba(44,36,22,.09)":"none",transition:"all .15s",fontFamily:"'DM Sans'"}}>
+                {t==="map"?"🗺 Map":"☰ List"}
+              </button>
+            ))}
+          </div>
+          {tab==="map"&&(<>
+            {drawings.length>0&&(
+              <div style={{display:"flex",gap:5,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
+                {drawings.map(d=>(
+                  <button key={d.id} onClick={()=>{setActDid(d.id);setPinM(null);}} style={{flexShrink:0,padding:"4px 13px",borderRadius:20,border:`1px solid ${curDrw?.id===d.id?"#8b5e3c":"#d4c9b5"}`,background:curDrw?.id===d.id?"#f0e6d8":"transparent",color:curDrw?.id===d.id?"#8b5e3c":"#8a7660",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans'",transition:"all .14s"}}>
+                    {d.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!curDrw?(
+              <div className="card" style={{padding:48,textAlign:"center"}}>
+                <div style={{fontSize:44,marginBottom:12}}>🗺️</div>
+                <p style={{fontFamily:"'Fraunces',serif",fontSize:16,color:"#5c4f3a",marginBottom:6}}>No drawings yet</p>
+                <p style={{color:"#8a7660",fontSize:13,marginBottom:18}}>Upload a site plan to start placing defect pins.</p>
+                <Btn onClick={onAddDrawing}>Upload Drawing</Btn>
+              </div>
+            ):(
+              <DrawingCanvas drawing={curDrw} issues={drwIss} allIssues={issues} pinM={pinM} onPinPlace={(id,x,y)=>{onPin(id,x,y,curDrw.id);setPinM(null);}} onIssueClick={onIssue} onCancelPin={()=>setPinM(null)}/>
+            )}
+            {issues.length>0&&(
+              <div style={{marginTop:16}}>
+                <p style={{fontSize:11,fontWeight:700,color:"#8b5e3c",textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>
+                  {pinM?`📌 Tap drawing to place pin for ${issues.find(i=>i.id===pinM)?.defectId}`:"Zone Issues"}
+                </p>
+                {issues.map(iss=>(
+                  <IssueRow key={iss.id} issue={iss} active={pinM===iss.id} onClick={()=>{if(!pinM)onIssue(iss.id);}} onStatus={s=>onStatusChange(iss.id,s)} onPin={()=>{if(!curDrw){alert("Upload a drawing first.");return;}setPinM(iss.id);setTab("map");}}/>
+                ))}
+              </div>
+            )}
+          </>)}
+          {tab==="list"&&(
+            <div>
+              {issues.length===0
+                ?<div className="card" style={{padding:32,textAlign:"center"}}><p style={{color:"#8a7660"}}>No issues yet.</p></div>
+                :[...issues].sort((a,b)=>a.seq-b.seq).map(iss=>(
+                    <IssueRow key={iss.id} issue={iss} active={false} onClick={()=>onIssue(iss.id)} onStatus={s=>onStatusChange(iss.id,s)} onPin={()=>{if(!curDrw){alert("Upload a drawing first.");return;}setActDid(curDrw?.id);setTab("map");setPinM(iss.id);}}/>
+                  ))
+              }
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ════ DRAWING CANVAS ════ */
+    function DrawingCanvas({drawing,issues,allIssues,pinM,onPinPlace,onIssueClick,onCancelPin}){
+      const [hov,setHov]=useState(null);
+      const [cur,setCur]=useState(null);
+      const imgRef=useRef();
+      const piss=pinM?allIssues.find(i=>i.id===pinM):null;
+      const pinned=issues.filter(i=>i.pinX!=null);
+      useEffect(()=>{setCur(null);},[pinM]);
+      const gxy=(cx,cy)=>{const r=imgRef.current.getBoundingClientRect();return{x:Math.round(Math.max(0,Math.min(100,((cx-r.left)/r.width)*100))*10)/10,y:Math.round(Math.max(0,Math.min(100,((cy-r.top)/r.height)*100))*10)/10};};
+      return (
+        <div>
+          {pinM&&(
+            <div style={{background:"#fdf4e7",border:"1px solid #e8c98a",borderRadius:8,padding:"9px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:16}}>📌</span>
+              <span style={{fontSize:13,color:"#b87333",fontWeight:600}}>Tap drawing to place <span style={{fontFamily:"'DM Mono'",fontWeight:700}}>{piss?.defectId}</span></span>
+              <Btn size="sm" variant="ghost" style={{marginLeft:"auto"}} onClick={onCancelPin}>Cancel</Btn>
+            </div>
+          )}
+          <div className="card" style={{position:"relative",overflow:"hidden",cursor:pinM?"crosshair":"default"}}>
+            <img ref={imgRef} src={drawing.imageData} alt={drawing.name}
+              style={{width:"100%",display:"block",maxHeight:460,objectFit:"contain",background:"#ede8dc",userSelect:"none"}}
+              onClick={e=>{if(!pinM)return;const p=gxy(e.clientX,e.clientY);onPinPlace(pinM,p.x,p.y);}}
+              onMouseMove={e=>{if(!pinM)return;setCur(gxy(e.clientX,e.clientY));}}
+              onMouseLeave={()=>setCur(null)}
+              onTouchEnd={e=>{if(!pinM)return;e.preventDefault();const t=e.changedTouches[0];const p=gxy(t.clientX,t.clientY);onPinPlace(pinM,p.x,p.y);}}
+              draggable={false}
+            />
+            {pinned.map(iss=>(
+              <PinMark key={iss.id} issue={iss} hov={hov===iss.id} dim={!!pinM&&pinM!==iss.id}
+                onE={()=>!pinM&&setHov(iss.id)} onL={()=>setHov(null)} onClick={()=>!pinM&&onIssueClick(iss.id)}/>
+            ))}
+            {pinM&&cur&&(
+              <div style={{position:"absolute",left:`${cur.x}%`,top:`${cur.y}%`,transform:"translate(-50%,-100%)",pointerEvents:"none",opacity:.75}}>
+                <svg width="28" height="36" viewBox="0 0 30 38" style={{filter:"drop-shadow(0 2px 4px rgba(139,94,60,.45))"}}>
+                  <path d="M15 0C7 0 0 7 0 15C0 23 15 38 15 38S30 23 30 15C30 7 23 0 15 0Z" fill="#8b5e3c" stroke="#faf7f2" strokeWidth="2"/>
+                  <text x="15" y="18" textAnchor="middle" fill="#faf7f2" fontSize="9" fontWeight="bold" fontFamily="monospace">{piss?.seq}</text>
+                </svg>
+              </div>
+            )}
+            {!pinM&&pinned.length===0&&(
+              <div style={{position:"absolute",bottom:10,right:10,background:"rgba(250,247,242,.95)",borderRadius:7,padding:"5px 12px",fontSize:11,color:"#8a7660",border:"1px solid #d4c9b5"}}>
+                Use 📌 on an issue below to place pins
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function PinMark({issue,hov,dim,onE,onL,onClick}){
+      const color=tc(issue.status);
+      return (
+        <div style={{position:"absolute",left:`${issue.pinX}%`,top:`${issue.pinY}%`,transform:"translate(-50%,-100%)",zIndex:10,cursor:"pointer",opacity:dim?.22:1,transition:"opacity .15s"}}
+          onClick={onClick} onMouseEnter={onE} onMouseLeave={onL}>
+          <svg width="28" height="36" viewBox="0 0 30 38" style={{filter:"drop-shadow(0 2px 5px rgba(0,0,0,.25))",display:"block"}}>
+            <path d="M15 0C7 0 0 7 0 15C0 23 15 38 15 38S30 23 30 15C30 7 23 0 15 0Z" fill={color} stroke="#faf7f2" strokeWidth="2"/>
+            <circle cx="15" cy="14" r="5" fill="white" fillOpacity=".2"/>
+            <text x="15" y="18" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold" fontFamily="monospace">{issue.seq}</text>
+          </svg>
+          <div style={{position:"absolute",left:"100%",top:"18%",background:"rgba(250,247,242,.96)",border:`1px solid ${color}`,borderRadius:5,padding:"2px 7px",fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",pointerEvents:"none",fontFamily:"'DM Mono'",lineHeight:1.4,boxShadow:"0 2px 8px rgba(44,36,22,.15)"}}>
+            {issue.defectId}
+          </div>
+          {hov&&(
+            <div style={{position:"absolute",bottom:"115%",left:"50%",transform:"translateX(-50%)",background:"#faf7f2",border:"1px solid #d4c9b5",borderRadius:10,padding:"10px 14px",fontSize:11,whiteSpace:"nowrap",color:"#2c2416",pointerEvents:"none",boxShadow:"0 6px 24px rgba(44,36,22,.18)",zIndex:20,minWidth:180}}>
+              <div style={{fontWeight:700,color,marginBottom:3,fontFamily:"'DM Mono'"}}>{issue.defectId}</div>
+              <div style={{color:"#5c4f3a",maxWidth:220,whiteSpace:"normal",lineHeight:1.6}}>{(issue.description||"").slice(0,70)}</div>
+              <div style={{color:"#8a7660",marginTop:4,fontSize:10}}>{issue.status} · {issue.severity}{issue.assignee?` · ${issue.assignee}`:""}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ════ ISSUE ROW ════ */
+    function IssueRow({issue,active,onClick,onStatus,onPin}){
+      const photos=issue.photos||[];
+      return (
+        <div className="card" style={{padding:"11px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:10,borderColor:active?"#8b5e3c":undefined,background:active?"#f0e6d8":undefined,transition:"border-color .13s,background .13s"}}>
+          <Dot status={issue.status}/>
+          <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={onClick}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              <span style={{fontFamily:"'DM Mono'",fontWeight:600,fontSize:12,color:"#8b5e3c"}}>{issue.defectId}</span>
+              <Badge sev={issue.severity}>{issue.severity}</Badge>
+              {issue.pinX!=null?<span style={{fontSize:10,color:"#5a7a5c"}}>📍 pinned</span>:<span style={{fontSize:10,color:"#b87333"}}>📌 unplaced</span>}
+              {photos.length>0&&<span style={{fontSize:10,color:"#8a7660"}}>🖼 {photos.length}</span>}
+            </div>
+            <div style={{fontSize:12,color:"#5c4f3a",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{issue.description||<em style={{color:"#8a7660"}}>No description</em>}</div>
+            <div style={{fontSize:10,color:"#8a7660",marginTop:1}}>{issue.date}{issue.assignee?` · ${issue.assignee}`:""}</div>
+          </div>
+          <div className="row-actions" style={{display:"flex",gap:5,alignItems:"center",flexShrink:0}}>
+            <button title="Place pin" onClick={e=>{e.stopPropagation();onPin();}} style={{width:32,height:32,borderRadius:8,background:issue.pinX!=null?"#eef3ee":"#f2ede3",border:`1px solid ${issue.pinX!=null?"#b5d4b7":"#d4c9b5"}`,color:issue.pinX!=null?"#5a7a5c":"#8a7660",cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .13s"}}>
+              {issue.pinX!=null?"📍":"📌"}
+            </button>
+            <select value={issue.status} onChange={e=>{e.stopPropagation();onStatus(e.target.value);}} onClick={e=>e.stopPropagation()} style={{background:TC[issue.status]?.bg||"#f2ede3",border:`1px solid ${TC[issue.status]?.border||"#d4c9b5"}`,borderRadius:7,color:tc(issue.status),fontSize:11,padding:"5px 6px",cursor:"pointer",fontFamily:"'DM Sans'",fontWeight:600,outline:"none"}}>
+              {STATUS.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+      );
+    }
+
+    /* ════ ISSUE DETAIL ════ */
+    function IssuePage({issue,zone,drawings,onEdit,onDelete,onBack,onPin,onStatusChange}){
+      const [editing,setEditing]=useState(false);
+      const [pinMode,setPinMode]=useState(false);
+      const [actDrw,setActDrw]=useState(null);
+      const drw=drawings.find(d=>d.id===issue.drawingId)??drawings[0];
+      const photos=issue.photos||[];
+      if(editing)return(
+        <div className="anim">
+          <IssueModal title={`Edit ${issue.defectId}`} issue={issue} drawings={drawings} inline onClose={()=>setEditing(false)} onSave={f=>{onEdit(f);setEditing(false);}}/>
+        </div>
+      );
+      return (
+        <div className="anim">
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18,flexWrap:"wrap"}}>
+            <Btn size="sm" variant="ghost" onClick={onBack}>← Back</Btn>
+            <span style={{fontFamily:"'DM Mono'",fontSize:16,fontWeight:700,color:"#8b5e3c"}}>{issue.defectId}</span>
+            <span style={{fontSize:12,color:"#8a7660"}}>{zone.name}</span>
+            <div style={{flex:1}}/>
+            <Btn size="sm" variant="ghost" onClick={()=>setEditing(true)}>Edit</Btn>
+            <Btn size="sm" variant="danger" onClick={()=>{if(confirm("Delete this issue?"))onDelete();}}>Delete</Btn>
+          </div>
+
+          <div className="card" style={{padding:18,marginBottom:12}}>
+            <div className="issue-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:16}}>
+              <div>
+                <span className="lbl">Status</span>
+                <select value={issue.status} onChange={e=>onStatusChange(e.target.value)} style={{background:TC[issue.status]?.bg||"#faf7f2",border:`2px solid ${TC[issue.status]?.border||"#d4c9b5"}`,borderRadius:8,color:tc(issue.status),fontSize:13,padding:"7px 11px",cursor:"pointer",fontFamily:"'DM Sans'",fontWeight:700,width:"100%",outline:"none"}}>
+                  {STATUS.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <span className="lbl">Severity</span>
+                <div style={{display:"inline-flex",alignItems:"center",gap:7,padding:"7px 13px",borderRadius:8,background:SC[issue.severity]?.bg||"#f2ede3",border:`1px solid ${SC[issue.severity]?.border||"#d4c9b5"}`}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:sc(issue.severity),flexShrink:0}}/>
+                  <span style={{color:sc(issue.severity),fontWeight:700,fontSize:13}}>{issue.severity}</span>
+                </div>
+              </div>
+            </div>
+            {[["Description",issue.description],["Location",issue.location],["Assigned To",issue.assignee],["Notes",issue.notes],["Date",issue.date]].map(([k,v])=>
+              v?<div key={k} style={{marginBottom:11}}><span className="lbl">{k}</span><p style={{fontSize:13.5,color:"#2c2416",lineHeight:1.65}}>{v}</p></div>:null
+            )}
+          </div>
+
+          {photos.length>0&&(
+            <div className="card" style={{padding:14,marginBottom:12}}>
+              <span className="lbl" style={{marginBottom:8}}>Photos ({photos.length}/{MAX_PHOTOS})</span>
+              <div className="photo-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                {photos.map((ph,i)=>(
+                  <div key={i} style={{borderRadius:9,overflow:"hidden",border:"1px solid #d4c9b5",aspectRatio:"4/3"}}>
+                    <img src={ph} alt={`Photo ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{padding:16}}>
+            <div style={{display:"flex",alignItems:"center",marginBottom:10}}>
+              <span className="lbl" style={{margin:0}}>Location Pin</span>
+              {drawings.length>0&&<Btn size="sm" style={{marginLeft:"auto"}} onClick={()=>{setPinMode(!pinMode);setActDrw(drw?.id);}}>
+                {pinMode?"Cancel":issue.pinX!=null?"Re-Pin":"Place Pin"}
+              </Btn>}
+            </div>
+            {pinMode&&drawings.length>1&&(
+              <div style={{display:"flex",gap:5,marginBottom:8,overflowX:"auto"}}>
+                {drawings.map(d=><button key={d.id} onClick={()=>setActDrw(d.id)} style={{flexShrink:0,padding:"3px 12px",borderRadius:20,border:`1px solid ${actDrw===d.id?"#8b5e3c":"#d4c9b5"}`,background:actDrw===d.id?"#f0e6d8":"transparent",color:actDrw===d.id?"#8b5e3c":"#8a7660",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans'"}}>{d.name}</button>)}
+              </div>
+            )}
+            {pinMode&&(()=>{
+              const td=drawings.find(d=>d.id===actDrw)??drawings[0];
+              return td?<InlinePinCv drawing={td} issue={issue} onPin={(x,y)=>{onPin(issue.id,x,y,td.id);setPinMode(false);}}/>:null;
+            })()}
+            {!pinMode&&drw&&issue.pinX!=null&&(
+              <div style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #d4c9b5"}}>
+                <img src={drw.imageData} alt={drw.name} style={{width:"100%",display:"block",maxHeight:300,objectFit:"contain",background:"#ede8dc"}}/>
+                <PinMark issue={issue} hov={false} dim={false} onE={()=>{}} onL={()=>{}} onClick={()=>{}}/>
+                <div style={{position:"absolute",bottom:8,left:8,background:"rgba(250,247,242,.95)",borderRadius:6,padding:"3px 9px",fontSize:10,color:"#8b5e3c",border:"1px solid #d4c9b5",fontFamily:"'DM Mono'"}}>{drw.name}</div>
+              </div>
+            )}
+            {!pinMode&&(!drw||issue.pinX==null)&&drawings.length>0&&<p style={{color:"#8a7660",fontSize:12}}>Not pinned yet. Click "Place Pin" to mark on the drawing.</p>}
+            {drawings.length===0&&<p style={{color:"#8a7660",fontSize:12}}>No drawings in this zone.</p>}
+          </div>
+        </div>
+      );
+    }
+
+    function InlinePinCv({drawing,issue,onPin}){
+      const [temp,setTemp]=useState(null);const ref=useRef();
+      const gxy=(cx,cy)=>{const r=ref.current.getBoundingClientRect();return{x:Math.round(Math.max(0,Math.min(100,((cx-r.left)/r.width)*100))*10)/10,y:Math.round(Math.max(0,Math.min(100,((cy-r.top)/r.height)*100))*10)/10};};
+      return (
+        <div style={{position:"relative",border:"2px dashed #8b5e3c",borderRadius:10,overflow:"hidden",cursor:"crosshair",background:"#ede8dc",marginBottom:10}}>
+          <img ref={ref} src={drawing.imageData} alt={drawing.name} style={{width:"100%",display:"block",maxHeight:340,objectFit:"contain",userSelect:"none"}}
+            onClick={e=>{const p=gxy(e.clientX,e.clientY);onPin(p.x,p.y);}}
+            onMouseMove={e=>setTemp(gxy(e.clientX,e.clientY))} onMouseLeave={()=>setTemp(null)}
+            onTouchEnd={e=>{e.preventDefault();const t=e.changedTouches[0];const p=gxy(t.clientX,t.clientY);onPin(p.x,p.y);}} draggable={false}
+          />
+          {temp&&<div style={{position:"absolute",left:`${temp.x}%`,top:`${temp.y}%`,transform:"translate(-50%,-100%)",pointerEvents:"none",opacity:.8}}>
+            <svg width="28" height="36" viewBox="0 0 30 38"><path d="M15 0C7 0 0 7 0 15C0 23 15 38 15 38S30 23 30 15C30 7 23 0 15 0Z" fill="#8b5e3c" stroke="#faf7f2" strokeWidth="2"/><text x="15" y="18" textAnchor="middle" fill="#faf7f2" fontSize="9" fontWeight="bold" fontFamily="monospace">{issue.seq}</text></svg>
+          </div>}
+          {!temp&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}><div style={{background:"rgba(250,247,242,.92)",borderRadius:9,padding:"8px 18px",border:"1px solid #d4c9b5",fontSize:13,color:"#8b5e3c",fontWeight:600}}>👆 Tap to place pin</div></div>}
+        </div>
+      );
+    }
+
+    /* ════ MODALS ════ */
+    function TextModal({title,hint,placeholder,onClose,onSave}){
+      const [val,setVal]=useState("");const ref=useRef();
+      return (
+        <div className="modal-bg" ref={ref} onClick={e=>{if(e.target===ref.current)onClose();}}>
+          <div className="modal slanim" onClick={e=>e.stopPropagation()}>
+            <ModalHdr title={title} onClose={onClose}/>
+            {hint&&<div style={{background:"#fdf4e7",border:"1px solid #e8c98a",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#b87333",marginBottom:14}}>{hint}</div>}
+            <input className="inp" value={val} onChange={e=>setVal(e.target.value)} placeholder={placeholder} autoFocus onKeyDown={e=>e.key==="Enter"&&val.trim()&&onSave(val.trim())}/>
+            <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+              <Btn onClick={()=>val.trim()&&onSave(val.trim())}>Create</Btn>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DrawingModal({onClose,onSave}){
+      const [name,setName]=useState("");const [img,setImg]=useState(null);const [busy,setBusy]=useState(false);const [err,setErr]=useState("");const bgRef=useRef();
+      const handleFile=async e=>{const f=e.target.files[0];if(!f)return;if(!f.type.startsWith("image/")){setErr("Please choose an image file.");return;}setBusy(true);setErr("");try{const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(f);});setImg(await compressImage(raw));}catch{setErr("Could not read image.");}finally{setBusy(false);}};
+      return (
+        <div className="modal-bg" ref={bgRef} onClick={e=>{if(e.target===bgRef.current)onClose();}}>
+          <div className="modal slanim" onClick={e=>e.stopPropagation()}>
+            <ModalHdr title="Upload Drawing" onClose={onClose}/>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              <div><label className="lbl">Drawing Name</label><input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Level 3 Floor Plan" autoFocus/></div>
+              <div>
+                <label className="lbl">Image File (JPG / PNG)</label>
+                <label style={{display:"block",border:`2px dashed ${img?"#b5d4b7":"#d4c9b5"}`,borderRadius:10,padding:"20px 14px",textAlign:"center",cursor:"pointer",background:img?"#eef3ee":"#f2ede3",transition:"all .15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#8b5e3c"}} onMouseLeave={e=>{e.currentTarget.style.borderColor=img?"#b5d4b7":"#d4c9b5"}}>
+                  <input type="file" accept="image/*" onChange={handleFile} onClick={e=>e.stopPropagation()} style={{display:"none"}}/>
+                  {busy?<span style={{color:"#b87333"}}>⏳ Processing…</span>:img?<span style={{color:"#5a7a5c"}}>✓ Ready — tap to replace</span>:<span style={{color:"#8a7660"}}>📂 Tap to choose image</span>}
+                </label>
+                {err&&<p style={{color:"#c0533a",fontSize:12,marginTop:5}}>⚠ {err}</p>}
+                {img&&!busy&&<img src={img} alt="preview" style={{marginTop:10,borderRadius:8,width:"100%",maxHeight:180,objectFit:"contain",background:"#ede8dc",border:"1px solid #d4c9b5"}}/>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:18,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+              <Btn style={{opacity:(name.trim()&&img&&!busy)?1:.4,cursor:(name.trim()&&img&&!busy)?"pointer":"not-allowed"}} onClick={()=>name.trim()&&img&&!busy&&onSave(name.trim(),img)}>{busy?"Processing…":"Upload"}</Btn>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Camera ── */
+    function CameraCapture({onCapture,onClose}){
+      const vr=useRef(),sr=useRef();
+      const [ready,setReady]=useState(false);const [err,setErr]=useState("");const [facing,setFacing]=useState("environment");const [flash,setFlash]=useState(false);
+      const isSecure=location.protocol==="https:"||location.hostname==="localhost";
+      const startStream=useCallback(async fm=>{
+        if(!isSecure){setErr("Camera requires HTTPS or localhost.");return;}
+        if(sr.current){sr.current.getTracks().forEach(t=>t.stop());sr.current=null;}
+        setReady(false);setErr("");
+        try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:fm,width:{ideal:1920},height:{ideal:1080}},audio:false});sr.current=s;if(vr.current){vr.current.srcObject=s;vr.current.onloadedmetadata=()=>{vr.current.play();setReady(true);};};}
+        catch(e){setErr(e.name==="NotAllowedError"?"Permission denied. Please allow camera access.":"Could not open camera: "+e.message);}
+      },[]);
+      useEffect(()=>{startStream(facing);return()=>{if(sr.current)sr.current.getTracks().forEach(t=>t.stop());};},[]);
+      const shoot=async()=>{
+        if(!vr.current||!ready)return;
+        setFlash(true);setTimeout(()=>setFlash(false),180);
+        const v=vr.current,cv=document.createElement("canvas");cv.width=v.videoWidth;cv.height=v.videoHeight;cv.getContext("2d").drawImage(v,0,0);
+        const comp=await compressImage(cv.toDataURL("image/jpeg",.92),1400,.82);
+        if(sr.current)sr.current.getTracks().forEach(t=>t.stop());
+        onCapture(comp);
+      };
+      return (
+        <div style={{position:"fixed",inset:0,zIndex:9999,background:"#1a1208",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:"rgba(26,18,8,.85)",flexShrink:0}}>
+            <span style={{color:"#f0e6d8",fontWeight:700,fontSize:14,fontFamily:"'Fraunces',serif"}}>📷 Take Photo</span>
+            <button onClick={onClose} style={{background:"none",border:"none",color:"#a67c52",fontSize:22,cursor:"pointer"}}>✕</button>
+          </div>
+          <div style={{flex:1,position:"relative",overflow:"hidden"}}>
+            <video ref={vr} playsInline muted style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+            {flash&&<div style={{position:"absolute",inset:0,background:"#fff",opacity:.6,pointerEvents:"none"}}/>}
+            {ready&&<svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",opacity:.12}}><line x1="33.3%" y1="0" x2="33.3%" y2="100%" stroke="#f0e6d8" strokeWidth="1"/><line x1="66.6%" y1="0" x2="66.6%" y2="100%" stroke="#f0e6d8" strokeWidth="1"/><line x1="0" y1="33.3%" x2="100%" y2="33.3%" stroke="#f0e6d8" strokeWidth="1"/><line x1="0" y1="66.6%" x2="100%" y2="66.6%" stroke="#f0e6d8" strokeWidth="1"/></svg>}
+            {!ready&&!err&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#a67c52",fontSize:14}}>⏳ Starting camera…</span></div>}
+            {err&&<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,gap:12}}>
+              <p style={{color:"#e8b5a5",fontSize:13,textAlign:"center"}}>⚠ {err}</p>
+              <button style={{padding:"8px 18px",borderRadius:8,background:"#8b5e3c",color:"#faf7f2",border:"none",fontWeight:600,cursor:"pointer",fontSize:13}} onClick={()=>startStream(facing)}>Retry</button>
+            </div>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-around",padding:"20px 32px 32px",background:"rgba(26,18,8,.9)",flexShrink:0}}>
+            <button onClick={()=>{const n=facing==="environment"?"user":"environment";setFacing(n);startStream(n);}} style={{background:"rgba(240,230,216,.12)",border:"none",borderRadius:"50%",width:50,height:50,fontSize:22,cursor:"pointer",color:"#f0e6d8",display:"flex",alignItems:"center",justifyContent:"center"}}>🔄</button>
+            <button onClick={shoot} disabled={!ready} style={{width:74,height:74,borderRadius:"50%",border:"4px solid #f0e6d8",background:ready?"#f0e6d8":"#4a3828",cursor:ready?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform .1s",transform:flash?"scale(.9)":"scale(1)"}}>
+              <div style={{width:60,height:60,borderRadius:"50%",background:ready?"#8b5e3c":"#2c2010"}}/>
+            </button>
+            <button onClick={onClose} style={{background:"rgba(240,230,216,.12)",border:"none",borderRadius:"50%",width:50,height:50,fontSize:14,cursor:"pointer",color:"#f0e6d8",fontWeight:700}}>✕</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Issue Modal — up to 5 photos ── */
+    function IssueModal({title,issue,drawings,onClose,onSave,inline}){
+      const [f,setF]=useState({description:issue?.description||"",severity:issue?.severity||"High",status:issue?.status||"Open",location:issue?.location||"",assignee:issue?.assignee||"",notes:issue?.notes||"",drawingId:issue?.drawingId||drawings[0]?.id||"",photos:issue?.photos||[]});
+      const [showCam,setShowCam]=useState(false);
+      const set=(k,v)=>setF(p=>({...p,[k]:v}));
+      const bgRef=useRef();const fileRef=useRef();
+
+      const addPhoto=async url=>{
+        if(f.photos.length>=MAX_PHOTOS)return;
+        const c=await compressImage(url,1200,.82);
+        set("photos",[...f.photos,c]);
+      };
+      const rmPhoto=i=>set("photos",f.photos.filter((_,idx)=>idx!==i));
+      const handleFile=async e=>{
+        const files=Array.from(e.target.files||[]);
+        for(const file of files){
+          if(!file.type.startsWith("image/"))continue;
+          if(f.photos.length>=MAX_PHOTOS)break;
+          const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(file);});
+          await addPhoto(raw);
+        }
+        e.target.value="";
+      };
+      const canAdd=f.photos.length<MAX_PHOTOS;
+
+      const photoSection=(
+        <div>
+          <label className="lbl">Photos ({f.photos.length}/{MAX_PHOTOS})</label>
+          {f.photos.length>0&&(
+            <div className="photo-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
+              {f.photos.map((ph,i)=>(
+                <div key={i} style={{position:"relative",borderRadius:9,overflow:"hidden",border:"1px solid #d4c9b5",aspectRatio:"4/3"}}>
+                  <img src={ph} alt={`Photo ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                  <button onClick={()=>rmPhoto(i)} style={{position:"absolute",top:4,right:4,background:"rgba(192,83,58,.85)",border:"none",borderRadius:"50%",width:22,height:22,color:"#fff",cursor:"pointer",fontSize:11,lineHeight:"22px",textAlign:"center",fontWeight:700}}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {canAdd?(
+            <div style={{display:"flex",gap:8}}>
+              <button type="button" onClick={()=>setShowCam(true)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
+                📷 Camera
+              </button>
+              <button type="button" onClick={()=>fileRef.current?.click()} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
+                🖼 Gallery
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFile} style={{display:"none"}}/>
+            </div>
+          ):<p style={{fontSize:12,color:"#b87333",padding:"8px 0"}}>Maximum {MAX_PHOTOS} photos reached.</p>}
+        </div>
+      );
+
+      const form=(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div><label className="lbl">Description *</label><textarea className="inp" rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Describe the defect…" style={{resize:"vertical"}}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label className="lbl">Severity</label><select className="inp" value={f.severity} onChange={e=>set("severity",e.target.value)}>{SEVERITY.map(s=><option key={s}>{s}</option>)}</select></div>
+            <div><label className="lbl">Status</label><select className="inp" value={f.status} onChange={e=>set("status",e.target.value)}>{STATUS.map(s=><option key={s}>{s}</option>)}</select></div>
+          </div>
+          {drawings.length>0&&<div><label className="lbl">Drawing</label><select className="inp" value={f.drawingId} onChange={e=>set("drawingId",e.target.value)}><option value="">— None —</option>{drawings.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></div>}
+          <div><label className="lbl">Location Notes</label><input className="inp" value={f.location} onChange={e=>set("location",e.target.value)} placeholder="e.g. North wall, 2nd floor"/></div>
+          <div><label className="lbl">Assigned To</label><input className="inp" value={f.assignee} onChange={e=>set("assignee",e.target.value)} placeholder="Inspector / Contractor"/></div>
+          <div><label className="lbl">Notes</label><textarea className="inp" rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Follow-up notes…" style={{resize:"vertical"}}/></div>
+          {photoSection}
+        </div>
+      );
+      return (
+        <>
+          {showCam&&<CameraCapture onCapture={async url=>{await addPhoto(url);setShowCam(false);}} onClose={()=>setShowCam(false)}/>}
+          {inline
+            ?<div>{form}<div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn onClick={()=>f.description.trim()&&onSave(f)}>Save</Btn></div></div>
+            :<div className="modal-bg" ref={bgRef} onClick={e=>{if(e.target===bgRef.current)onClose();}}>
+              <div className="modal slanim" onClick={e=>e.stopPropagation()}>
+                <ModalHdr title={title} onClose={onClose}/>
+                {form}
+                <div style={{display:"flex",gap:8,marginTop:18,justifyContent:"flex-end"}}><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn onClick={()=>f.description.trim()&&onSave(f)}>Save Issue</Btn></div>
+              </div>
+            </div>
+          }
+        </>
+      );
+    }
+
+    function ReportModal({zones,onClose,onGenerate}){
+      const [sel,setSel]=useState("");const bgRef=useRef();
+      return(
+        <div className="modal-bg" ref={bgRef} onClick={e=>{if(e.target===bgRef.current)onClose();}}>
+          <div className="modal slanim" onClick={e=>e.stopPropagation()}>
+            <ModalHdr title="Export PDF Report" onClose={onClose}/>
+            <p style={{fontSize:13,color:"#8a7660",marginBottom:16,lineHeight:1.65}}>Generates an annotated report with drawings, pin thumbnails, and detailed issue cards.</p>
+            <label className="lbl">Filter by Zone</label>
+            <select className="inp" value={sel} onChange={e=>setSel(e.target.value)} style={{marginBottom:10}}>
+              <option value="">🌐 All Zones ({zones.length})</option>
+              {zones.map(z=><option key={z.id} value={z.id}>{z.name} — {zonePrefix(z.name)}</option>)}
+            </select>
+            <p style={{fontSize:12,color:"#8a7660",marginBottom:18}}>{sel?`Exporting: ${zones.find(z=>z.id===sel)?.name}`:`Exporting all ${zones.length} zone(s)`}</p>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+              <Btn variant="success" onClick={()=>onGenerate(sel||null)}>↓ Export PDF</Btn>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root=ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
