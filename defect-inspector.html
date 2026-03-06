@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SiteLog — Defect Inspector</title>
+  <title>BC Inspection</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body style="margin:0;padding:0;background:#f5f0e8;">
   <div id="root"></div>
@@ -282,7 +283,8 @@
       const mutP=(id,fn)=>setDb(d=>({...d,projects:d.projects.map(p=>p.id===id?fn(p):p)}));
       const addProject=name=>{setDb(d=>({...d,projects:[...d.projects,{id:uid(),name,zones:[],issues:[],createdAt:today()}]}));flash(`"${name}" created`);};
       const addZone=name=>{mutP(projId,p=>({...p,zones:[...p.zones,{id:uid(),name,drawings:[],createdAt:today()}]}));flash("Zone added");};
-      const addDrawing=(name,img)=>{mutP(projId,p=>({...p,zones:p.zones.map(z=>z.id===zoneId?{...z,drawings:[...(z.drawings??[]),{id:uid(),name,imageData:img,zoneId,createdAt:today()}]}:z)}));flash("Drawing uploaded");};
+      const addDrawing=(name,img)=>{mutP(projId,p=>({...p,zones:p.zones.map(z=>z.id===zoneId?{...z,drawings:[...(z.drawings??[]),{id:uid(),name,imageData:img,annotations:[],zoneId,createdAt:today()}]}:z)}));flash("Drawing uploaded");};
+      const updDrawing=(drawId,fields)=>{mutP(projId,p=>({...p,zones:p.zones.map(z=>({...z,drawings:(z.drawings??[]).map(d=>d.id===drawId?{...d,...fields}:d)}))}));flash("Annotations saved ✓");};
       const addIssue=fields=>{const{prefix,seq,defectId}=nextId(allIss,zone.name);const iss={id:uid(),prefix,seq,defectId,zoneId,date:today(),status:"Open",photos:[],...fields};mutP(projId,p=>({...p,issues:[...(p.issues??[]),iss]}));flash(`${defectId} created`);return iss;};
       const updIssue=(id,fields)=>mutP(projId,p=>({...p,issues:p.issues.map(i=>i.id===id?{...i,...fields}:i)}));
       const delIssue=id=>{mutP(projId,p=>({...p,issues:p.issues.filter(i=>i.id!==id)}));flash("Issue deleted","err");};
@@ -325,6 +327,8 @@
               .row-actions select{width:100%;}
               .breadcrumb{max-width:120px;overflow:hidden;text-overflow:ellipsis;}
               .issue-grid{grid-template-columns:1fr!important;}
+              .ann-toolbar-row1{gap:4px!important;}
+              .ann-toolbar-row1 .tool-label{display:none!important;}
             }
             @media(max-width:360px){
               .stat-grid{grid-template-columns:repeat(2,1fr)!important;}
@@ -335,8 +339,8 @@
           <nav style={{background:"#faf7f2",borderBottom:"1px solid #d4c9b5",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 8px rgba(44,36,22,.06)"}}>
             <div style={{maxWidth:980,margin:"0 auto",padding:"0 16px",height:52,display:"flex",alignItems:"center",gap:8}}>
               <span onClick={goHome} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:7,flexShrink:0,textDecoration:"none"}}>
-                <span style={{width:30,height:30,borderRadius:9,background:"#8b5e3c",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,color:"#faf7f2",fontWeight:700,fontFamily:"'DM Mono'"}}>S</span>
-                <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,fontSize:17,color:"#2c2416",letterSpacing:"-.01em"}}>SiteLog</span>
+                <span style={{width:30,height:30,borderRadius:9,background:"#8b5e3c",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,color:"#faf7f2",fontWeight:700,fontFamily:"'DM Mono'"}}>B</span>
+                <span style={{fontFamily:"'Fraunces',serif",fontWeight:700,fontSize:17,color:"#2c2416",letterSpacing:"-.01em"}}>BC Inspection</span>
               </span>
               <div style={{flex:1,display:"flex",alignItems:"center",gap:4,overflowX:"auto",padding:"0 4px",scrollbarWidth:"none"}}>
                 {proj&&<><span style={{color:"#c4b89f",fontSize:14}}>›</span><button className="chip breadcrumb" onClick={()=>goProject(projId)}>{proj.name}</button></>}
@@ -351,7 +355,7 @@
           <div style={{maxWidth:980,margin:"0 auto",padding:"20px 16px"}}>
             {page==="home"    &&<HomePage    projects={db.projects} onSelect={goProject} onAdd={()=>setModal({type:"newProject"})} onDelete={delProject}/>}
             {page==="project" &&proj&&<ProjectPage project={proj} zones={zones} issues={allIss} onZone={goZone} onAddZone={()=>setModal({type:"newZone"})}/>}
-            {page==="zone"    &&zone&&<ZonePage zone={zone} issues={zIss} onIssue={goIssue} onAddIssue={()=>setModal({type:"newIssue"})} onAddDrawing={()=>setModal({type:"newDrawing"})} onStatusChange={(id,s)=>updIssue(id,{status:s})} onPin={placePin}/>}
+            {page==="zone"    &&zone&&<ZonePage zone={zone} issues={zIss} onIssue={goIssue} onAddIssue={()=>setModal({type:"newIssue"})} onAddDrawing={()=>setModal({type:"newDrawing"})} onStatusChange={(id,s)=>updIssue(id,{status:s})} onPin={placePin} onSaveAnnotations={updDrawing}/>}
             {page==="issue"   &&issue&&zone&&<IssuePage issue={issue} zone={zone} drawings={zone.drawings??[]} onEdit={f=>{updIssue(issue.id,f);flash("Saved");}} onDelete={()=>{delIssue(issue.id);setPage("zone");}} onBack={()=>setPage("zone")} onPin={placePin} onStatusChange={s=>updIssue(issue.id,{status:s})}/>}
           </div>
 
@@ -377,7 +381,7 @@
           <div style={{display:"flex",alignItems:"flex-start",marginBottom:24,gap:12,flexWrap:"wrap"}}>
             <div>
               <h1 style={{fontFamily:"'Fraunces',serif",fontSize:27,fontWeight:700,color:"#2c2416",letterSpacing:"-.02em"}}>Projects</h1>
-              <p style={{color:"#8a7660",fontSize:13,marginTop:3}}>{projects.length} project{projects.length!==1?"s":""} · SiteLog Inspector</p>
+              <p style={{color:"#8a7660",fontSize:13,marginTop:3}}>{projects.length} project{projects.length!==1?"s":""} · BC Inspection</p>
             </div>
             <Btn style={{marginLeft:"auto"}} onClick={onAdd}>+ New Project</Btn>
           </div>
@@ -438,7 +442,7 @@
     }
 
     /* ════ ZONE ════ */
-    function ZonePage({zone,issues,onIssue,onAddIssue,onAddDrawing,onStatusChange,onPin}){
+    function ZonePage({zone,issues,onIssue,onAddIssue,onAddDrawing,onStatusChange,onPin,onSaveAnnotations}){
       const [tab,setTab]=useState("map");
       const [actDid,setActDid]=useState(null);
       const [pinM,setPinM]=useState(null);
@@ -485,7 +489,7 @@
                 <Btn onClick={onAddDrawing}>Upload Drawing</Btn>
               </div>
             ):(
-              <DrawingCanvas drawing={curDrw} issues={drwIss} allIssues={issues} pinM={pinM} onPinPlace={(id,x,y)=>{onPin(id,x,y,curDrw.id);setPinM(null);}} onIssueClick={onIssue} onCancelPin={()=>setPinM(null)}/>
+              <DrawingCanvas drawing={curDrw} issues={drwIss} allIssues={issues} pinM={pinM} onPinPlace={(id,x,y)=>{onPin(id,x,y,curDrw.id);setPinM(null);}} onIssueClick={onIssue} onCancelPin={()=>setPinM(null)} onSaveAnnotations={onSaveAnnotations}/>
             )}
             {issues.length>0&&(
               <div style={{marginTop:16}}>
@@ -512,17 +516,293 @@
       );
     }
 
-    /* ════ DRAWING CANVAS ════ */
-    function DrawingCanvas({drawing,issues,allIssues,pinM,onPinPlace,onIssueClick,onCancelPin}){
+    /* ════════════════════════════════════════════════
+       DRAWING CANVAS  — with annotation draw tools
+    ════════════════════════════════════════════════ */
+
+    /* ── Engineering revision cloud: arc bumps along the perimeter ── */
+    function drawCloudPath(ctx, x1, y1, x2, y2) {
+      const left   = Math.min(x1, x2), right  = Math.max(x1, x2);
+      const top    = Math.min(y1, y2), bottom = Math.max(y1, y2);
+      const W = right - left, H = bottom - top;
+      if (W < 4 || H < 4) { ctx.rect(left,top,W,H); return; }
+
+      // bump radius ~ 10% of shortest side, clamped 8–28px
+      const bR = Math.min(Math.max(Math.min(W, H) * 0.10, 8), 28);
+
+      // number of bumps per side (always ≥ 2)
+      const nTop    = Math.max(2, Math.round(W / (bR * 2)));
+      const nRight  = Math.max(2, Math.round(H / (bR * 2)));
+      const nBottom = Math.max(2, Math.round(W / (bR * 2)));
+      const nLeft   = Math.max(2, Math.round(H / (bR * 2)));
+
+      ctx.beginPath();
+      // helper: draw one convex bump between two points (outward = negative = toward outside)
+      const bump = (ax, ay, bx, by, outward) => {
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const dx = bx - ax, dy = by - ay;
+        const len = Math.hypot(dx, dy);
+        const nx = -dy / len * bR * outward;
+        const ny =  dx / len * bR * outward;
+        const cx2 = mx + nx, cy2 = my + ny;
+        ctx.arcTo(cx2, cy2, bx, by, bR);
+      };
+
+      // --- top edge (left → right, bumps go upward = outward = -1) ---
+      ctx.moveTo(left, top);
+      for (let i = 0; i < nTop; i++) {
+        const ax = left + (W / nTop) * i;
+        const bx = left + (W / nTop) * (i + 1);
+        bump(ax, top, bx, top, -1);
+      }
+      // --- right edge (top → bottom, bumps go rightward = +1) ---
+      for (let i = 0; i < nRight; i++) {
+        const ay = top + (H / nRight) * i;
+        const by2 = top + (H / nRight) * (i + 1);
+        bump(right, ay, right, by2, 1);
+      }
+      // --- bottom edge (right → left, bumps go downward = +1) ---
+      for (let i = 0; i < nBottom; i++) {
+        const ax = right - (W / nBottom) * i;
+        const bx = right - (W / nBottom) * (i + 1);
+        bump(ax, bottom, bx, bottom, 1);
+      }
+      // --- left edge (bottom → top, bumps go leftward = +1) ---
+      for (let i = 0; i < nLeft; i++) {
+        const ay = bottom - (H / nLeft) * i;
+        const by2 = bottom - (H / nLeft) * (i + 1);
+        bump(left, ay, left, by2, -1);
+      }
+      ctx.closePath();
+    }
+
+    /* ── draw one annotation stroke onto a canvas ctx ── */
+    function renderAnnotation(ctx, ann, scale=1) {
+      ctx.save();
+      ctx.strokeStyle = ann.color || '#c0533a';
+      ctx.fillStyle   = ann.color || '#c0533a';
+      ctx.lineWidth   = (ann.size||3)*scale;
+      ctx.lineCap     = 'round';
+      ctx.lineJoin    = 'round';
+      const s=scale;
+      if(ann.type==='pencil' && ann.pts?.length>1){
+        ctx.beginPath();
+        ctx.moveTo(ann.pts[0][0]*s, ann.pts[0][1]*s);
+        // Smooth with quadratic curves
+        for(let i=1;i<ann.pts.length-1;i++){
+          const mx=(ann.pts[i][0]+ann.pts[i+1][0])/2*s;
+          const my=(ann.pts[i][1]+ann.pts[i+1][1])/2*s;
+          ctx.quadraticCurveTo(ann.pts[i][0]*s,ann.pts[i][1]*s,mx,my);
+        }
+        const last=ann.pts[ann.pts.length-1];
+        ctx.lineTo(last[0]*s,last[1]*s);
+        ctx.stroke();
+      } else if(ann.type==='cloud'){
+        drawCloudPath(ctx, ann.x1*s, ann.y1*s, ann.x2*s, ann.y2*s);
+        ctx.globalAlpha=0.13; ctx.fill(); ctx.globalAlpha=1; ctx.stroke();
+      } else if(ann.type==='rect'){
+        const x=Math.min(ann.x1,ann.x2)*s, y=Math.min(ann.y1,ann.y2)*s;
+        const w=Math.abs(ann.x2-ann.x1)*s, h=Math.abs(ann.y2-ann.y1)*s;
+        ctx.globalAlpha=0.10; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1; ctx.strokeRect(x,y,w,h);
+      } else if(ann.type==='circle'){
+        const cx=(ann.x1+ann.x2)/2*s, cy=(ann.y1+ann.y2)/2*s;
+        const rx=Math.abs(ann.x2-ann.x1)/2*s, ry=Math.abs(ann.y2-ann.y1)/2*s;
+        ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+        ctx.globalAlpha=0.10; ctx.fill(); ctx.globalAlpha=1; ctx.stroke();
+      } else if(ann.type==='line'){
+        ctx.beginPath();
+        ctx.moveTo(ann.x1*s, ann.y1*s);
+        ctx.lineTo(ann.x2*s, ann.y2*s);
+        ctx.stroke();
+      } else if(ann.type==='arrow'){
+        const x1=ann.x1*s,y1=ann.y1*s,x2=ann.x2*s,y2=ann.y2*s;
+        const ang=Math.atan2(y2-y1,x2-x1);
+        const hw=(ann.size||3)*scale*4;
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x2,y2);
+        ctx.lineTo(x2-hw*Math.cos(ang-0.42),y2-hw*Math.sin(ang-0.42));
+        ctx.lineTo(x2-hw*Math.cos(ang+0.42),y2-hw*Math.sin(ang+0.42));
+        ctx.closePath(); ctx.fill();
+      } else if(ann.type==='text' && ann.text){
+        const fs = (ann.size||3)*scale*5+10;
+        ctx.font=`bold ${fs}px DM Sans,sans-serif`;
+        ctx.globalAlpha=0.95;
+        ctx.fillStyle=ann.color||'#c0533a';
+        ctx.shadowColor='rgba(250,247,242,.95)'; ctx.shadowBlur=5*scale;
+        ctx.fillText(ann.text, ann.x1*s, ann.y1*s);
+        ctx.shadowBlur=0;
+      }
+      ctx.restore();
+    }
+
+    /* ── merge base image + annotations → new dataUrl ── */
+    function flattenAnnotations(baseDataUrl, annotations, displayW, displayH) {
+      return new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{
+          const cv=document.createElement('canvas');
+          cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+          const ctx=cv.getContext('2d');
+          ctx.drawImage(img,0,0);
+          const scaleX=img.naturalWidth/displayW;
+          const scaleY=img.naturalHeight/displayH;
+          const scale=Math.min(scaleX,scaleY); // uniform
+          annotations.forEach(ann=>renderAnnotation(ctx,ann,scale));
+          res(cv.toDataURL('image/jpeg',0.92));
+        };
+        img.onerror=()=>res(baseDataUrl);
+        img.src=baseDataUrl;
+      });
+    }
+
+    const TOOLS=[
+      {id:'select', icon:'↖', label:'Select / Pan'},
+      {id:'pencil', icon:'✏', label:'Freehand Pencil'},
+      {id:'cloud',  icon:'⌘', label:'Revision Cloud'},
+      {id:'rect',   icon:'▭', label:'Rectangle'},
+      {id:'circle', icon:'◯', label:'Ellipse'},
+      {id:'line',   icon:'╱', label:'Line'},
+      {id:'arrow',  icon:'↗', label:'Arrow'},
+      {id:'text',   icon:'T', label:'Text Label'},
+    ];
+    const ANN_COLORS=[
+      {c:'#c0533a',l:'Red'},
+      {c:'#b87333',l:'Amber'},
+      {c:'#a08020',l:'Yellow'},
+      {c:'#5a7a5c',l:'Green'},
+      {c:'#2563eb',l:'Blue'},
+      {c:'#7c3aed',l:'Purple'},
+      {c:'#2c2416',l:'Black'},
+    ];
+    const ANN_SIZES=[{v:2,l:'S'},{v:4,l:'M'},{v:7,l:'L'},{v:11,l:'XL'}];
+
+    function DrawingCanvas({drawing,issues,allIssues,pinM,onPinPlace,onIssueClick,onCancelPin,onSaveAnnotations}){
       const [hov,setHov]=useState(null);
       const [cur,setCur]=useState(null);
+      const [tool,setTool]=useState('select');
+      const [color,setColor]=useState('#c0533a');
+      const [size,setSize]=useState(4);
+      const [annotations,setAnnotations]=useState(drawing.annotations||[]);
+      const [drawing2,setDrawing2]=useState(false); // is mouse down
+      const [startPt,setStartPt]=useState(null);
+      const [livePt,setLivePt]=useState(null);
+      const [currentPts,setCurrentPts]=useState([]); // for pencil
+      const [textInput,setTextInput]=useState('');
+      const [textPos,setTextPos]=useState(null);
+      const [showTools,setShowTools]=useState(false);
+      const [saved,setSaved]=useState(false);
       const imgRef=useRef();
+      const canvasRef=useRef();
+
       const piss=pinM?allIssues.find(i=>i.id===pinM):null;
       const pinned=issues.filter(i=>i.pinX!=null);
-      useEffect(()=>{setCur(null);},[pinM]);
-      const gxy=(cx,cy)=>{const r=imgRef.current.getBoundingClientRect();return{x:Math.round(Math.max(0,Math.min(100,((cx-r.left)/r.width)*100))*10)/10,y:Math.round(Math.max(0,Math.min(100,((cy-r.top)/r.height)*100))*10)/10};};
+
+      // Sync annotations when drawing changes
+      useEffect(()=>{ setAnnotations(drawing.annotations||[]); },[drawing.id]);
+      useEffect(()=>{ setCur(null); },[pinM]);
+
+      /* ── coordinate helpers ── */
+      const getRelXY=(cx,cy)=>{
+        const r=imgRef.current.getBoundingClientRect();
+        const x=Math.max(0,Math.min(r.width, cx-r.left));
+        const y=Math.max(0,Math.min(r.height,cy-r.top));
+        return [Math.round(x*10)/10, Math.round(y*10)/10];
+      };
+      const gxy=(cx,cy)=>{
+        const r=imgRef.current.getBoundingClientRect();
+        return{x:Math.round(Math.max(0,Math.min(100,((cx-r.left)/r.width)*100))*10)/10,
+               y:Math.round(Math.max(0,Math.min(100,((cy-r.top)/r.height)*100))*10)/10};
+      };
+
+      /* ── redraw annotation overlay canvas ── */
+      useEffect(()=>{
+        const cv=canvasRef.current; if(!cv)return;
+        const img=imgRef.current; if(!img)return;
+        const r=img.getBoundingClientRect();
+        cv.width=r.width; cv.height=r.height;
+        const ctx=cv.getContext('2d');
+        ctx.clearRect(0,0,cv.width,cv.height);
+        // committed annotations
+        annotations.forEach(ann=>renderAnnotation(ctx,ann,1));
+        // live preview
+        if(drawing2 && startPt && livePt && tool!=='pencil' && tool!=='select'){
+          ctx.save();
+          ctx.strokeStyle=color; ctx.fillStyle=color;
+          ctx.lineWidth=size; ctx.lineCap='round'; ctx.lineJoin='round';
+          const liveAnn={type:tool,x1:startPt[0],y1:startPt[1],x2:livePt[0],y2:livePt[1],color,size};
+          renderAnnotation(ctx,liveAnn,1);
+          ctx.restore();
+        }
+        if(drawing2 && tool==='pencil' && currentPts.length>1){
+          ctx.save();
+          ctx.strokeStyle=color; ctx.lineWidth=size; ctx.lineCap='round'; ctx.lineJoin='round';
+          ctx.beginPath(); ctx.moveTo(currentPts[0][0],currentPts[0][1]);
+          for(let i=1;i<currentPts.length;i++) ctx.lineTo(currentPts[i][0],currentPts[i][1]);
+          ctx.stroke(); ctx.restore();
+        }
+      },[annotations,drawing2,startPt,livePt,currentPts,tool,color,size]);
+
+      /* ── pointer events ── */
+      const onDown=(cx,cy)=>{
+        if(pinM || tool==='select') return;
+        if(tool==='text'){setTextPos(getRelXY(cx,cy));setTextInput('');return;}
+        const pt=getRelXY(cx,cy);
+        setStartPt(pt); setLivePt(pt); setDrawing2(true);
+        if(tool==='pencil') setCurrentPts([pt]);
+      };
+      const onMove=(cx,cy)=>{
+        if(pinM && tool==='select'){ setCur(gxy(cx,cy)); return; }
+        if(!drawing2) return;
+        const pt=getRelXY(cx,cy);
+        setLivePt(pt);
+        if(tool==='pencil') setCurrentPts(p=>[...p,pt]);
+      };
+      const onUp=(cx,cy)=>{
+        if(!drawing2) return;
+        const pt=getRelXY(cx,cy);
+        setSaved(false);
+        if(tool==='pencil' && currentPts.length>1){
+          setAnnotations(a=>[...a,{type:'pencil',pts:currentPts,color,size}]);
+        } else if(tool!=='pencil' && tool!=='select'){
+          if(Math.abs(pt[0]-startPt[0])>3||Math.abs(pt[1]-startPt[1])>3){
+            setAnnotations(a=>[...a,{type:tool,x1:startPt[0],y1:startPt[1],x2:pt[0],y2:pt[1],color,size}]);
+          }
+        }
+        setDrawing2(false); setStartPt(null); setLivePt(null); setCurrentPts([]);
+      };
+
+      const undo=()=>{ setAnnotations(a=>a.slice(0,-1)); setSaved(false); };
+      const clear=()=>{ if(confirm('Clear all annotations?')){setAnnotations([]);setSaved(false);} };
+
+      const saveAnnotations=async()=>{
+        if(!imgRef.current) return;
+        const r=imgRef.current.getBoundingClientRect();
+        const merged=await flattenAnnotations(drawing.imageData, annotations, r.width, r.height);
+        onSaveAnnotations(drawing.id, {imageData: merged, annotations: []});
+        setAnnotations([]);
+        setSaved(true);
+      };
+
+      const textConfirm=()=>{
+        if(textInput.trim()&&textPos){
+          setAnnotations(a=>[...a,{type:'text',text:textInput.trim(),x1:textPos[0],y1:textPos[1],color,size}]);
+          setSaved(false);
+        }
+        setTextPos(null); setTextInput('');
+      };
+
+      const activeTool = pinM ? 'pin' : tool;
+      const isDrawMode = tool!=='select' && !pinM;
+
+      const cursorStyle = pinM ? 'crosshair'
+        : tool==='select' ? 'default'
+        : tool==='text'   ? 'text'
+        : 'crosshair';
+
       return (
         <div>
+          {/* Pin mode banner */}
           {pinM&&(
             <div style={{background:"#fdf4e7",border:"1px solid #e8c98a",borderRadius:8,padding:"9px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:16}}>📌</span>
@@ -530,19 +810,119 @@
               <Btn size="sm" variant="ghost" style={{marginLeft:"auto"}} onClick={onCancelPin}>Cancel</Btn>
             </div>
           )}
-          <div className="card" style={{position:"relative",overflow:"hidden",cursor:pinM?"crosshair":"default"}}>
+
+          {/* ── Annotation Toolbar ── */}
+          {!pinM && (
+            <div style={{marginBottom:8,background:"#faf7f2",border:"1px solid #d4c9b5",borderRadius:12,padding:"10px 12px",boxShadow:"0 1px 4px rgba(44,36,22,.06)"}}>
+              {/* Row 1: Tools + active label + actions */}
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{display:"flex",gap:2,background:"#ede8dc",borderRadius:9,padding:2,border:"1px solid #d4c9b5"}}>
+                  {TOOLS.map(t=>(
+                    <button key={t.id} title={t.label}
+                      onClick={()=>{setTool(t.id);setTextPos(null);}}
+                      style={{width:32,height:32,borderRadius:7,border:"none",cursor:"pointer",
+                        background:tool===t.id?"#8b5e3c":"transparent",
+                        color:tool===t.id?"#faf7f2":"#5c4f3a",
+                        fontSize:t.id==='text'?12:14,fontWeight:700,
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        transition:"all .12s",
+                        boxShadow:tool===t.id?"0 1px 4px rgba(44,36,22,.18)":"none",
+                      }}>
+                      {t.icon}
+                    </button>
+                  ))}
+                </div>
+                <span style={{fontSize:11,fontWeight:600,color:"#8b5e3c",background:"#f0e6d8",borderRadius:6,padding:"3px 8px",border:"1px solid #c4b89f",whiteSpace:"nowrap"}}>
+                  {TOOLS.find(t=>t.id===tool)?.label}
+                </span>
+                <div style={{display:"flex",gap:5,marginLeft:"auto",flexWrap:"wrap"}}>
+                  <button onClick={undo} disabled={annotations.length===0} title="Undo last stroke"
+                    style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:7,border:"1px solid #d4c9b5",background:"#f2ede3",color:annotations.length===0?"#c4b89f":"#5c4f3a",cursor:annotations.length===0?"default":"pointer",fontSize:12,fontWeight:600,transition:"all .13s"}}>
+                    ↩ Undo
+                  </button>
+                  <button onClick={clear} disabled={annotations.length===0} title="Clear all annotations"
+                    style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:7,border:"1px solid #e8b5a5",background:annotations.length===0?"#faf7f2":"#fdf0ec",color:annotations.length===0?"#c4b89f":"#c0533a",cursor:annotations.length===0?"default":"pointer",fontSize:12,fontWeight:600,transition:"all .13s"}}>
+                    🗑
+                  </button>
+                  <button onClick={saveAnnotations} disabled={annotations.length===0||saved} title="Bake annotations into drawing image"
+                    style={{display:"flex",alignItems:"center",gap:4,padding:"5px 11px",borderRadius:7,border:`1px solid ${saved?"#b5d4b7":"#c4b89f"}`,background:saved?"#eef3ee":annotations.length>0?"#f0e6d8":"#faf7f2",color:saved?"#5a7a5c":annotations.length===0?"#c4b89f":"#8b5e3c",cursor:(annotations.length===0||saved)?"default":"pointer",fontSize:12,fontWeight:700,transition:"all .13s"}}>
+                    {saved?"✓ Saved":"💾 Save"}
+                  </button>
+                </div>
+              </div>
+              {/* Row 2: Colors + Sizes + live preview */}
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:10,fontWeight:700,color:"#8a7660",textTransform:"uppercase",letterSpacing:".05em"}}>Color</span>
+                <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                  {ANN_COLORS.map(({c,l})=>(
+                    <button key={c} onClick={()=>setColor(c)} title={l}
+                      style={{width:22,height:22,borderRadius:"50%",
+                        border:`2.5px solid ${color===c?"#2c2416":"transparent"}`,
+                        background:c,cursor:"pointer",flexShrink:0,transition:"all .12s",
+                        boxShadow:color===c?`0 0 0 2px #faf7f2, 0 0 0 4px ${c}`:"0 1px 3px rgba(0,0,0,.15)",
+                        transform:color===c?"scale(1.2)":"scale(1)",
+                      }}/>
+                  ))}
+                </div>
+                <div style={{width:1,height:20,background:"#d4c9b5",margin:"0 2px",flexShrink:0}}/>
+                <span style={{fontSize:10,fontWeight:700,color:"#8a7660",textTransform:"uppercase",letterSpacing:".05em"}}>Stroke</span>
+                <div style={{display:"flex",gap:3,background:"#ede8dc",borderRadius:8,padding:2,border:"1px solid #d4c9b5"}}>
+                  {ANN_SIZES.map(s=>(
+                    <button key={s.v} onClick={()=>setSize(s.v)} title={`${s.v}px`}
+                      style={{padding:"4px 10px",borderRadius:6,border:"none",cursor:"pointer",
+                        fontSize:11,fontWeight:700,
+                        background:size===s.v?"#8b5e3c":"transparent",
+                        color:size===s.v?"#faf7f2":"#5c4f3a",
+                        transition:"all .12s"}}>
+                      {s.l}
+                    </button>
+                  ))}
+                </div>
+                <svg width="44" height="22" style={{flexShrink:0}}>
+                  <line x1="4" y1="11" x2="40" y2="11" stroke={color} strokeWidth={size} strokeLinecap="round"/>
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* ── Canvas + Image + Overlay ── */}
+          <div className="card" style={{position:"relative",overflow:"hidden",cursor:cursorStyle,userSelect:"none"}}
+            onMouseDown={e=>{if(pinM){return;}e.preventDefault();onDown(e.clientX,e.clientY);}}
+            onMouseMove={e=>{
+              if(pinM){setCur(gxy(e.clientX,e.clientY));return;}
+              onMove(e.clientX,e.clientY);
+            }}
+            onMouseUp={e=>{
+              if(pinM){const p=gxy(e.clientX,e.clientY);onPinPlace(pinM,p.x,p.y);return;}
+              onUp(e.clientX,e.clientY);
+            }}
+            onMouseLeave={()=>{setCur(null);if(drawing2)onUp(0,0);}}
+            onTouchStart={e=>{if(pinM)return;e.preventDefault();const t=e.touches[0];onDown(t.clientX,t.clientY);}}
+            onTouchMove={e=>{if(pinM)return;e.preventDefault();const t=e.touches[0];onMove(t.clientX,t.clientY);}}
+            onTouchEnd={e=>{
+              if(pinM){e.preventDefault();const t=e.changedTouches[0];const p=gxy(t.clientX,t.clientY);onPinPlace(pinM,p.x,p.y);return;}
+              e.preventDefault();const t=e.changedTouches[0];onUp(t.clientX,t.clientY);
+            }}
+          >
+            {/* Base image */}
             <img ref={imgRef} src={drawing.imageData} alt={drawing.name}
-              style={{width:"100%",display:"block",maxHeight:460,objectFit:"contain",background:"#ede8dc",userSelect:"none"}}
-              onClick={e=>{if(!pinM)return;const p=gxy(e.clientX,e.clientY);onPinPlace(pinM,p.x,p.y);}}
-              onMouseMove={e=>{if(!pinM)return;setCur(gxy(e.clientX,e.clientY));}}
-              onMouseLeave={()=>setCur(null)}
-              onTouchEnd={e=>{if(!pinM)return;e.preventDefault();const t=e.changedTouches[0];const p=gxy(t.clientX,t.clientY);onPinPlace(pinM,p.x,p.y);}}
+              style={{width:"100%",display:"block",maxHeight:500,objectFit:"contain",background:"#ede8dc",userSelect:"none",pointerEvents:"none"}}
               draggable={false}
             />
+
+            {/* Annotation overlay canvas */}
+            <canvas ref={canvasRef}
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none"}}
+            />
+
+            {/* Pin markers */}
             {pinned.map(iss=>(
               <PinMark key={iss.id} issue={iss} hov={hov===iss.id} dim={!!pinM&&pinM!==iss.id}
-                onE={()=>!pinM&&setHov(iss.id)} onL={()=>setHov(null)} onClick={()=>!pinM&&onIssueClick(iss.id)}/>
+                onE={()=>tool==='select'&&!pinM&&setHov(iss.id)} onL={()=>setHov(null)}
+                onClick={()=>tool==='select'&&!pinM&&onIssueClick(iss.id)}/>
             ))}
+
+            {/* Pin cursor preview */}
             {pinM&&cur&&(
               <div style={{position:"absolute",left:`${cur.x}%`,top:`${cur.y}%`,transform:"translate(-50%,-100%)",pointerEvents:"none",opacity:.75}}>
                 <svg width="28" height="36" viewBox="0 0 30 38" style={{filter:"drop-shadow(0 2px 4px rgba(139,94,60,.45))"}}>
@@ -551,12 +931,35 @@
                 </svg>
               </div>
             )}
-            {!pinM&&pinned.length===0&&(
-              <div style={{position:"absolute",bottom:10,right:10,background:"rgba(250,247,242,.95)",borderRadius:7,padding:"5px 12px",fontSize:11,color:"#8a7660",border:"1px solid #d4c9b5"}}>
-                Use 📌 on an issue below to place pins
+
+            {/* Hint when no pins and select mode */}
+            {!pinM && tool==='select' && pinned.length===0 && annotations.length===0 && (
+              <div style={{position:"absolute",bottom:10,right:10,background:"rgba(250,247,242,.95)",borderRadius:7,padding:"5px 12px",fontSize:11,color:"#8a7660",border:"1px solid #d4c9b5",pointerEvents:"none"}}>
+                Select a draw tool above or 📌 an issue below
+              </div>
+            )}
+
+            {/* Tool hint overlay */}
+            {!pinM && tool!=='select' && !drawing2 && !textPos && annotations.length===0 && (
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <div style={{background:"rgba(250,247,242,.88)",borderRadius:9,padding:"8px 16px",border:"1px solid #d4c9b5",fontSize:13,color:"#8b5e3c",fontWeight:600}}>
+                  {tool==='text' ? "Click to place text" : "Click & drag to draw"}
+                </div>
               </div>
             )}
           </div>
+
+          {/* Text input popup */}
+          {textPos && (
+            <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center",background:"#f0e6d8",borderRadius:9,padding:"10px 12px",border:"1px solid #c4b89f"}}>
+              <span style={{fontSize:13,color:"#8b5e3c",fontWeight:600,whiteSpace:"nowrap"}}>📝 Type text:</span>
+              <input autoFocus className="inp" value={textInput} onChange={e=>setTextInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter')textConfirm();if(e.key==='Escape'){setTextPos(null);setTextInput('');}}}
+                placeholder="Label text…" style={{flex:1,margin:0}}/>
+              <Btn size="sm" onClick={textConfirm}>Add</Btn>
+              <Btn size="sm" variant="ghost" onClick={()=>{setTextPos(null);setTextInput('');}}>✕</Btn>
+            </div>
+          )}
         </div>
       );
     }
@@ -618,6 +1021,7 @@
       const [editing,setEditing]=useState(false);
       const [pinMode,setPinMode]=useState(false);
       const [actDrw,setActDrw]=useState(null);
+      const [annotIdx,setAnnotIdx]=useState(null); // photo index being annotated live on IssuePage
       const drw=drawings.find(d=>d.id===issue.drawingId)??drawings[0];
       const photos=issue.photos||[];
       if(editing)return(
@@ -657,16 +1061,38 @@
             )}
           </div>
 
+          {/* ── Photos / PDFs with draw annotation ── */}
           {photos.length>0&&(
             <div className="card" style={{padding:14,marginBottom:12}}>
-              <span className="lbl" style={{marginBottom:8}}>Photos ({photos.length}/{MAX_PHOTOS})</span>
-              <div className="photo-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+              <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+                <span className="lbl" style={{margin:0}}>Attachments ({photos.length}/{MAX_PHOTOS})</span>
+                <span style={{fontSize:11,color:"#8a7660",marginLeft:8}}>Tap a photo to annotate</span>
+              </div>
+              <div className="photo-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:annotIdx!==null?10:0}}>
                 {photos.map((ph,i)=>(
-                  <div key={i} style={{borderRadius:9,overflow:"hidden",border:"1px solid #d4c9b5",aspectRatio:"4/3"}}>
-                    <img src={ph} alt={`Photo ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                  <div key={i}
+                    style={{position:"relative",borderRadius:9,overflow:"hidden",border:`2px solid ${annotIdx===i?"#8b5e3c":"#d4c9b5"}`,aspectRatio:"4/3",cursor:"pointer",transition:"border-color .13s"}}
+                    onClick={()=>setAnnotIdx(annotIdx===i?null:i)}>
+                    <img src={ph} alt={`Attachment ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                    <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(139,94,60,.85)",color:"#faf7f2",fontSize:10,fontWeight:700,textAlign:"center",padding:"3px 0",opacity:annotIdx===i?1:0,transition:"opacity .13s"}}>
+                      ✏ ANNOTATING
+                    </div>
+                    <div style={{position:"absolute",top:4,left:4,background:"rgba(250,247,242,.88)",borderRadius:5,padding:"2px 6px",fontSize:10,fontWeight:700,color:"#8b5e3c"}}>✏</div>
                   </div>
                 ))}
               </div>
+              {annotIdx!==null&&photos[annotIdx]&&(
+                <IssueAnnotateCanvas
+                  key={annotIdx}
+                  dataUrl={photos[annotIdx]}
+                  onSave={annotated=>{
+                    const updated=[...photos];updated[annotIdx]=annotated;
+                    onEdit({photos:updated});
+                    setAnnotIdx(null);
+                  }}
+                  onClose={()=>setAnnotIdx(null)}
+                />
+              )}
             </div>
           )}
 
@@ -736,28 +1162,189 @@
       );
     }
 
+    /* ── PDF.js helper: render one page of a PDF to a jpeg dataUrl ── */
+    async function renderPdfPage(arrayBuffer, pageNum=1) {
+      // Set workerSrc to matching CDN version
+      window.pdfjsLib = window['pdfjs-dist/build/pdf'];
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+      const totalPages = pdf.numPages;
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({scale: 2.5}); // high-res
+      const canvas = document.createElement('canvas');
+      canvas.width  = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
+      return { dataUrl: canvas.toDataURL('image/jpeg', 0.92), totalPages };
+    }
+
     function DrawingModal({onClose,onSave}){
-      const [name,setName]=useState("");const [img,setImg]=useState(null);const [busy,setBusy]=useState(false);const [err,setErr]=useState("");const bgRef=useRef();
-      const handleFile=async e=>{const f=e.target.files[0];if(!f)return;if(!f.type.startsWith("image/")){setErr("Please choose an image file.");return;}setBusy(true);setErr("");try{const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(f);});setImg(await compressImage(raw));}catch{setErr("Could not read image.");}finally{setBusy(false);}};
+      const [name,setName]         = useState("");
+      const [img,setImg]           = useState(null);     // final jpeg dataUrl
+      const [busy,setBusy]         = useState(false);
+      const [err,setErr]           = useState("");
+      const [isPdf,setIsPdf]       = useState(false);
+      const [pdfBuf,setPdfBuf]     = useState(null);     // ArrayBuffer of PDF
+      const [pdfPages,setPdfPages] = useState(0);
+      const [pdfPage,setPdfPage]   = useState(1);
+      const [pageImgs,setPageImgs] = useState({});       // cache: page# → dataUrl
+      const bgRef = useRef();
+
+      /* ── load a page from cached PDF ── */
+      const loadPage = async (buf, num) => {
+        if (pageImgs[num]) { setImg(pageImgs[num]); setPdfPage(num); return; }
+        setBusy(true);
+        try {
+          const {dataUrl} = await renderPdfPage(buf, num);
+          const compressed = await compressImage(dataUrl, 2000, 0.92);
+          setPageImgs(prev => ({...prev, [num]: compressed}));
+          setImg(compressed);
+          setPdfPage(num);
+        } catch(e) { setErr("Could not render PDF page: " + e.message); }
+        finally { setBusy(false); }
+      };
+
+      /* ── handle file selection (image OR pdf) ── */
+      const handleFile = async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        setBusy(true); setErr(""); setImg(null); setIsPdf(false); setPdfBuf(null); setPdfPages(0); setPdfPage(1); setPageImgs({});
+        try {
+          if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+            // Read as ArrayBuffer for PDF.js
+            const buf = await new Promise((res,rej) => {
+              const r = new FileReader();
+              r.onload = ev => res(ev.target.result);
+              r.onerror = rej;
+              r.readAsArrayBuffer(f);
+            });
+            const {dataUrl, totalPages} = await renderPdfPage(buf, 1);
+            const compressed = await compressImage(dataUrl, 2000, 0.92);
+            setPdfBuf(buf); setPdfPages(totalPages); setIsPdf(true);
+            setPageImgs({1: compressed});
+            setImg(compressed); setPdfPage(1);
+            // Auto-fill name from filename if empty
+            if (!name.trim()) setName(f.name.replace(/\.pdf$/i,'').replace(/[-_]/g,' '));
+          } else if (f.type.startsWith('image/')) {
+            const raw = await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(f);});
+            setImg(await compressImage(raw)); setIsPdf(false);
+            if (!name.trim()) setName(f.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' '));
+          } else {
+            setErr("Please choose an image (JPG/PNG) or PDF file.");
+          }
+        } catch(ex) { setErr("Could not read file: " + ex.message); }
+        finally { setBusy(false); }
+        e.target.value = "";
+      };
+
+      const canSave = name.trim() && img && !busy;
+
       return (
         <div className="modal-bg" ref={bgRef} onClick={e=>{if(e.target===bgRef.current)onClose();}}>
-          <div className="modal slanim" onClick={e=>e.stopPropagation()}>
+          <div className="modal slanim" onClick={e=>e.stopPropagation()} style={{maxWidth:720}}>
             <ModalHdr title="Upload Drawing" onClose={onClose}/>
             <div style={{display:"flex",flexDirection:"column",gap:14}}>
-              <div><label className="lbl">Drawing Name</label><input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Level 3 Floor Plan" autoFocus/></div>
+
+              {/* Name */}
               <div>
-                <label className="lbl">Image File (JPG / PNG)</label>
-                <label style={{display:"block",border:`2px dashed ${img?"#b5d4b7":"#d4c9b5"}`,borderRadius:10,padding:"20px 14px",textAlign:"center",cursor:"pointer",background:img?"#eef3ee":"#f2ede3",transition:"all .15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#8b5e3c"}} onMouseLeave={e=>{e.currentTarget.style.borderColor=img?"#b5d4b7":"#d4c9b5"}}>
-                  <input type="file" accept="image/*" onChange={handleFile} onClick={e=>e.stopPropagation()} style={{display:"none"}}/>
-                  {busy?<span style={{color:"#b87333"}}>⏳ Processing…</span>:img?<span style={{color:"#5a7a5c"}}>✓ Ready — tap to replace</span>:<span style={{color:"#8a7660"}}>📂 Tap to choose image</span>}
-                </label>
-                {err&&<p style={{color:"#c0533a",fontSize:12,marginTop:5}}>⚠ {err}</p>}
-                {img&&!busy&&<img src={img} alt="preview" style={{marginTop:10,borderRadius:8,width:"100%",maxHeight:180,objectFit:"contain",background:"#ede8dc",border:"1px solid #d4c9b5"}}/>}
+                <label className="lbl">Drawing Name</label>
+                <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Level 3 Floor Plan" autoFocus/>
               </div>
+
+              {/* File drop zone */}
+              <div>
+                <label className="lbl">File — JPG, PNG or PDF</label>
+                <label style={{display:"block",border:`2px dashed ${img?"#b5d4b7":"#d4c9b5"}`,borderRadius:10,padding:"22px 14px",textAlign:"center",cursor:"pointer",background:img?"#eef3ee":"#f2ede3",transition:"all .15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#8b5e3c";e.currentTarget.style.background="#f0e6d8";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=img?"#b5d4b7":"#d4c9b5";e.currentTarget.style.background=img?"#eef3ee":"#f2ede3";}}>
+                  <input type="file" accept="image/*,.pdf,application/pdf" onChange={handleFile} onClick={ev=>ev.stopPropagation()} style={{display:"none"}}/>
+                  {busy
+                    ? <span style={{color:"#b87333",fontWeight:600}}>⏳ Processing…</span>
+                    : img
+                      ? <span style={{color:"#5a7a5c",fontWeight:600}}>✓ {isPdf?`PDF loaded (${pdfPages} page${pdfPages>1?"s":""}) — tap to replace`:"Image ready — tap to replace"}</span>
+                      : <div>
+                          <div style={{fontSize:28,marginBottom:6}}>📂</div>
+                          <div style={{fontWeight:600,color:"#5c4f3a",marginBottom:3}}>Tap to choose file</div>
+                          <div style={{fontSize:12,color:"#8a7660"}}>Supports JPG, PNG, and PDF drawings</div>
+                        </div>
+                  }
+                </label>
+                {err && <p style={{color:"#c0533a",fontSize:12,marginTop:6,display:"flex",alignItems:"center",gap:4}}>⚠ {err}</p>}
+              </div>
+
+              {/* Preview area */}
+              {img && !busy && (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <span className="lbl" style={{margin:0}}>
+                      {isPdf ? `Preview — Page ${pdfPage} of ${pdfPages}` : "Preview"}
+                    </span>
+                    {isPdf && pdfPages > 1 && (
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <button
+                          disabled={pdfPage<=1||busy}
+                          onClick={()=>loadPage(pdfBuf, pdfPage-1)}
+                          style={{width:30,height:30,borderRadius:7,border:"1px solid #d4c9b5",background:"#f2ede3",color:pdfPage<=1?"#c4b89f":"#5c4f3a",cursor:pdfPage<=1?"default":"pointer",fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+                        <span style={{fontSize:12,color:"#8a7660",minWidth:60,textAlign:"center",fontFamily:"'DM Mono'"}}>
+                          {busy?"…":`${pdfPage} / ${pdfPages}`}
+                        </span>
+                        <button
+                          disabled={pdfPage>=pdfPages||busy}
+                          onClick={()=>loadPage(pdfBuf, pdfPage+1)}
+                          style={{width:30,height:30,borderRadius:7,border:"1px solid #d4c9b5",background:"#f2ede3",color:pdfPage>=pdfPages?"#c4b89f":"#5c4f3a",cursor:pdfPage>=pdfPages?"default":"pointer",fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Page thumbnail strip for multi-page PDFs */}
+                  {isPdf && pdfPages > 1 && (
+                    <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:10,paddingBottom:4}}>
+                      {Array.from({length:Math.min(pdfPages,20)},(_,i)=>i+1).map(pg=>(
+                        <div key={pg} onClick={()=>loadPage(pdfBuf,pg)}
+                          style={{flexShrink:0,width:56,cursor:"pointer",borderRadius:6,overflow:"hidden",border:`2px solid ${pdfPage===pg?"#8b5e3c":"#d4c9b5"}`,background:"#ede8dc",transition:"border-color .13s",opacity:pageImgs[pg]?1:.55}}>
+                          {pageImgs[pg]
+                            ? <img src={pageImgs[pg]} alt={`p${pg}`} style={{width:"100%",display:"block",aspectRatio:"0.7",objectFit:"cover"}}/>
+                            : <div style={{aspectRatio:"0.7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#8a7660",fontFamily:"'DM Mono'"}}>{pg}</div>
+                          }
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Main preview image */}
+                  <div style={{borderRadius:10,overflow:"hidden",border:"1px solid #d4c9b5",background:"#ede8dc",position:"relative"}}>
+                    <img src={img} alt="preview"
+                      style={{width:"100%",maxHeight:360,objectFit:"contain",display:"block",background:"#ede8dc"}}/>
+                    {isPdf && (
+                      <div style={{position:"absolute",top:8,left:8,background:"rgba(250,247,242,.92)",border:"1px solid #d4c9b5",borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,color:"#8b5e3c",fontFamily:"'DM Mono'"}}>
+                        PDF · p{pdfPage}
+                      </div>
+                    )}
+                  </div>
+
+                  {isPdf && pdfPages > 1 && (
+                    <p style={{fontSize:12,color:"#8a7660",marginTop:8}}>
+                      This page ({pdfPage}) will be used as the drawing. Navigate pages above to select a different one.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {busy && !img && (
+                <div style={{background:"#f2ede3",borderRadius:10,padding:24,textAlign:"center"}}>
+                  <div style={{fontSize:24,marginBottom:8}}>⏳</div>
+                  <p style={{color:"#8a7660",fontSize:13}}>Rendering PDF… this may take a moment</p>
+                </div>
+              )}
             </div>
-            <div style={{display:"flex",gap:8,marginTop:18,justifyContent:"flex-end"}}>
+
+            <div style={{display:"flex",gap:8,marginTop:20,justifyContent:"flex-end"}}>
               <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-              <Btn style={{opacity:(name.trim()&&img&&!busy)?1:.4,cursor:(name.trim()&&img&&!busy)?"pointer":"not-allowed"}} onClick={()=>name.trim()&&img&&!busy&&onSave(name.trim(),img)}>{busy?"Processing…":"Upload"}</Btn>
+              <Btn style={{opacity:canSave?1:.4,cursor:canSave?"pointer":"not-allowed"}}
+                onClick={()=>canSave&&onSave(name.trim(),img)}>
+                {busy?"Processing…":"Use This Drawing"}
+              </Btn>
             </div>
           </div>
         </div>
@@ -812,55 +1399,107 @@
       );
     }
 
-    /* ── Issue Modal — up to 5 photos ── */
+    /* ── Issue Modal — up to 5 photos/PDFs, with annotation draw canvas ── */
     function IssueModal({title,issue,drawings,onClose,onSave,inline}){
       const [f,setF]=useState({description:issue?.description||"",severity:issue?.severity||"High",status:issue?.status||"Open",location:issue?.location||"",assignee:issue?.assignee||"",notes:issue?.notes||"",drawingId:issue?.drawingId||drawings[0]?.id||"",photos:issue?.photos||[]});
       const [showCam,setShowCam]=useState(false);
+      const [activePhotoIdx,setActivePhotoIdx]=useState(null); // index of photo being annotated
       const set=(k,v)=>setF(p=>({...p,[k]:v}));
-      const bgRef=useRef();const fileRef=useRef();
+      const bgRef=useRef(); const fileRef=useRef();
 
-      const addPhoto=async url=>{
+      /* ── add image/pdf as attachment ── */
+      const addAttachment=async url=>{
         if(f.photos.length>=MAX_PHOTOS)return;
         const c=await compressImage(url,1200,.82);
-        set("photos",[...f.photos,c]);
+        const newPhotos=[...f.photos,c];
+        set("photos",newPhotos);
+        return newPhotos.length-1; // return new index
       };
-      const rmPhoto=i=>set("photos",f.photos.filter((_,idx)=>idx!==i));
+      const rmAttachment=i=>{
+        set("photos",f.photos.filter((_,idx)=>idx!==i));
+        if(activePhotoIdx===i) setActivePhotoIdx(null);
+        else if(activePhotoIdx>i) setActivePhotoIdx(p=>p-1);
+      };
+
+      /* ── handle image/PDF file picker ── */
       const handleFile=async e=>{
         const files=Array.from(e.target.files||[]);
         for(const file of files){
-          if(!file.type.startsWith("image/"))continue;
           if(f.photos.length>=MAX_PHOTOS)break;
-          const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(file);});
-          await addPhoto(raw);
+          if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')){
+            try{
+              const buf=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsArrayBuffer(file);});
+              const {dataUrl}=await renderPdfPage(buf,1);
+              await addAttachment(dataUrl);
+            }catch(ex){alert("Could not read PDF: "+ex.message);}
+          } else if(file.type.startsWith("image/")){
+            const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsDataURL(file);});
+            await addAttachment(raw);
+          }
         }
         e.target.value="";
       };
+
+      /* ── save annotation from draw canvas back into photos array ── */
+      const onAnnotateSave=async(annotatedDataUrl, idx)=>{
+        const updated=[...f.photos];
+        updated[idx]=annotatedDataUrl;
+        set("photos",updated);
+        setActivePhotoIdx(null);
+      };
+
       const canAdd=f.photos.length<MAX_PHOTOS;
 
-      const photoSection=(
+      /* ── Attachment section ── */
+      const attachSection=(
         <div>
-          <label className="lbl">Photos ({f.photos.length}/{MAX_PHOTOS})</label>
+          <label className="lbl">Photos / PDFs ({f.photos.length}/{MAX_PHOTOS})</label>
           {f.photos.length>0&&(
             <div className="photo-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
               {f.photos.map((ph,i)=>(
-                <div key={i} style={{position:"relative",borderRadius:9,overflow:"hidden",border:"1px solid #d4c9b5",aspectRatio:"4/3"}}>
-                  <img src={ph} alt={`Photo ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-                  <button onClick={()=>rmPhoto(i)} style={{position:"absolute",top:4,right:4,background:"rgba(192,83,58,.85)",border:"none",borderRadius:"50%",width:22,height:22,color:"#fff",cursor:"pointer",fontSize:11,lineHeight:"22px",textAlign:"center",fontWeight:700}}>✕</button>
+                <div key={i} style={{position:"relative",borderRadius:9,overflow:"hidden",border:`2px solid ${activePhotoIdx===i?"#8b5e3c":"#d4c9b5"}`,aspectRatio:"4/3",cursor:"pointer",transition:"border-color .13s"}}
+                  onClick={()=>setActivePhotoIdx(activePhotoIdx===i?null:i)}>
+                  <img src={ph} alt={`Attachment ${i+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                  <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0)",display:"flex",alignItems:"center",justifyContent:"center",gap:6,opacity:0,transition:"opacity .13s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(44,36,22,.35)";e.currentTarget.style.opacity=1;}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(0,0,0,0)";e.currentTarget.style.opacity=0;}}>
+                    <span style={{background:"rgba(250,247,242,.92)",borderRadius:6,padding:"4px 8px",fontSize:11,fontWeight:700,color:"#8b5e3c"}}>✏ Draw</span>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();rmAttachment(i);}}
+                    style={{position:"absolute",top:4,right:4,background:"rgba(192,83,58,.9)",border:"none",borderRadius:"50%",width:22,height:22,color:"#fff",cursor:"pointer",fontSize:11,lineHeight:"22px",textAlign:"center",fontWeight:700,zIndex:2}}>✕</button>
+                  {activePhotoIdx===i&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"#8b5e3c",color:"#faf7f2",fontSize:10,fontWeight:700,textAlign:"center",padding:"3px 0",letterSpacing:".04em"}}>EDITING</div>}
                 </div>
               ))}
             </div>
           )}
+
+          {/* ── Inline annotation draw canvas ── */}
+          {activePhotoIdx!==null && f.photos[activePhotoIdx] && (
+            <IssueAnnotateCanvas
+              key={activePhotoIdx}
+              dataUrl={f.photos[activePhotoIdx]}
+              onSave={annotated=>onAnnotateSave(annotated, activePhotoIdx)}
+              onClose={()=>setActivePhotoIdx(null)}
+            />
+          )}
+
           {canAdd?(
             <div style={{display:"flex",gap:8}}>
-              <button type="button" onClick={()=>setShowCam(true)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
+              <button type="button" onClick={()=>setShowCam(true)}
+                style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
                 📷 Camera
               </button>
-              <button type="button" onClick={()=>fileRef.current?.click()} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
-                🖼 Gallery
+              <button type="button" onClick={()=>fileRef.current?.click()}
+                style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px 0",background:"#f2ede3",border:"1.5px solid #d4c9b5",borderRadius:9,color:"#5c4f3a",fontSize:13,fontWeight:600,cursor:"pointer",transition:"border-color .14s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#8b5e3c"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="#d4c9b5"}>
+                🖼 Photo / PDF
               </button>
-              <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFile} style={{display:"none"}}/>
+              <input ref={fileRef} type="file" accept="image/*,.pdf,application/pdf" multiple onChange={handleFile} style={{display:"none"}}/>
             </div>
-          ):<p style={{fontSize:12,color:"#b87333",padding:"8px 0"}}>Maximum {MAX_PHOTOS} photos reached.</p>}
+          ):<p style={{fontSize:12,color:"#b87333",padding:"8px 0",fontWeight:600}}>⚠ Maximum {MAX_PHOTOS} attachments reached.</p>}
         </div>
       );
 
@@ -875,12 +1514,12 @@
           <div><label className="lbl">Location Notes</label><input className="inp" value={f.location} onChange={e=>set("location",e.target.value)} placeholder="e.g. North wall, 2nd floor"/></div>
           <div><label className="lbl">Assigned To</label><input className="inp" value={f.assignee} onChange={e=>set("assignee",e.target.value)} placeholder="Inspector / Contractor"/></div>
           <div><label className="lbl">Notes</label><textarea className="inp" rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Follow-up notes…" style={{resize:"vertical"}}/></div>
-          {photoSection}
+          {attachSection}
         </div>
       );
       return (
         <>
-          {showCam&&<CameraCapture onCapture={async url=>{await addPhoto(url);setShowCam(false);}} onClose={()=>setShowCam(false)}/>}
+          {showCam&&<CameraCapture onCapture={async url=>{await addAttachment(url);setShowCam(false);}} onClose={()=>setShowCam(false)}/>}
           {inline
             ?<div>{form}<div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn onClick={()=>f.description.trim()&&onSave(f)}>Save</Btn></div></div>
             :<div className="modal-bg" ref={bgRef} onClick={e=>{if(e.target===bgRef.current)onClose();}}>
@@ -892,6 +1531,182 @@
             </div>
           }
         </>
+      );
+    }
+
+    /* ── Inline annotation canvas for photos inside Issue ── */
+    function IssueAnnotateCanvas({dataUrl, onSave, onClose}){
+      const [annots,setAnnots]=useState([]);
+      const [tool,setTool]=useState('pencil');
+      const [color,setColor]=useState('#c0533a');
+      const [size,setSize]=useState(4);
+      const [isDown,setIsDown]=useState(false);
+      const [startPt,setStartPt]=useState(null);
+      const [livePt,setLivePt]=useState(null);
+      const [currentPts,setCurrentPts]=useState([]);
+      const [textPos,setTextPos]=useState(null);
+      const [textInput,setTextInput]=useState('');
+      const [saving,setSaving]=useState(false);
+      const imgRef=useRef(); const canvasRef=useRef();
+
+      const getRelXY=(cx,cy)=>{
+        const r=imgRef.current.getBoundingClientRect();
+        return[Math.max(0,Math.min(r.width,cx-r.left)), Math.max(0,Math.min(r.height,cy-r.top))];
+      };
+
+      useEffect(()=>{
+        const cv=canvasRef.current; if(!cv||!imgRef.current)return;
+        const r=imgRef.current.getBoundingClientRect();
+        cv.width=r.width; cv.height=r.height;
+        const ctx=cv.getContext('2d');
+        ctx.clearRect(0,0,cv.width,cv.height);
+        annots.forEach(a=>renderAnnotation(ctx,a,1));
+        if(isDown&&startPt&&livePt&&tool!=='pencil'){
+          ctx.save(); ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=size; ctx.lineCap='round'; ctx.lineJoin='round';
+          renderAnnotation(ctx,{type:tool,x1:startPt[0],y1:startPt[1],x2:livePt[0],y2:livePt[1],color,size},1);
+          ctx.restore();
+        }
+        if(isDown&&tool==='pencil'&&currentPts.length>1){
+          ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=size; ctx.lineCap='round'; ctx.lineJoin='round';
+          ctx.beginPath(); ctx.moveTo(currentPts[0][0],currentPts[0][1]);
+          for(let i=1;i<currentPts.length-1;i++){
+            const mx=(currentPts[i][0]+currentPts[i+1][0])/2, my=(currentPts[i][1]+currentPts[i+1][1])/2;
+            ctx.quadraticCurveTo(currentPts[i][0],currentPts[i][1],mx,my);
+          }
+          if(currentPts.length>1){const l=currentPts[currentPts.length-1];ctx.lineTo(l[0],l[1]);}
+          ctx.stroke(); ctx.restore();
+        }
+      },[annots,isDown,startPt,livePt,currentPts,tool,color,size]);
+
+      const onDown=(cx,cy)=>{
+        if(tool==='text'){setTextPos(getRelXY(cx,cy));setTextInput('');return;}
+        const pt=getRelXY(cx,cy);
+        setStartPt(pt);setLivePt(pt);setIsDown(true);
+        if(tool==='pencil')setCurrentPts([pt]);
+      };
+      const onMove=(cx,cy)=>{
+        if(!isDown)return;
+        const pt=getRelXY(cx,cy);
+        setLivePt(pt);
+        if(tool==='pencil')setCurrentPts(p=>[...p,pt]);
+      };
+      const onUp=(cx,cy)=>{
+        if(!isDown)return;
+        const pt=getRelXY(cx,cy);
+        if(tool==='pencil'&&currentPts.length>1)setAnnots(a=>[...a,{type:'pencil',pts:currentPts,color,size}]);
+        else if(tool!=='pencil'){if(Math.abs(pt[0]-startPt[0])>3||Math.abs(pt[1]-startPt[1])>3)setAnnots(a=>[...a,{type:tool,x1:startPt[0],y1:startPt[1],x2:pt[0],y2:pt[1],color,size}]);}
+        setIsDown(false);setStartPt(null);setLivePt(null);setCurrentPts([]);
+      };
+
+      const textConfirm=()=>{
+        if(textInput.trim()&&textPos)setAnnots(a=>[...a,{type:'text',text:textInput.trim(),x1:textPos[0],y1:textPos[1],color,size}]);
+        setTextPos(null);setTextInput('');
+      };
+
+      const handleSave=async()=>{
+        setSaving(true);
+        try{
+          const merged=await flattenAnnotations(dataUrl,annots,imgRef.current.getBoundingClientRect().width,imgRef.current.getBoundingClientRect().height);
+          onSave(merged);
+        }catch(e){alert("Save failed: "+e.message);}
+        setSaving(false);
+      };
+
+      const ISSUE_TOOLS=TOOLS.filter(t=>t.id!=='select');
+      const cursorStyle=tool==='text'?'text':'crosshair';
+
+      return(
+        <div style={{background:"#faf7f2",border:"2px solid #8b5e3c",borderRadius:12,padding:12,marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <span style={{fontSize:12,fontWeight:700,color:"#8b5e3c"}}>✏ Annotate Photo</span>
+            <span style={{fontSize:11,color:"#8a7660",flex:1}}>Draw on this photo, then tap Save</span>
+            <button onClick={onClose} style={{background:"none",border:"none",color:"#8a7660",cursor:"pointer",fontSize:16,fontWeight:700}}>✕</button>
+          </div>
+
+          {/* Mini toolbar */}
+          <div style={{background:"#f2ede3",border:"1px solid #d4c9b5",borderRadius:10,padding:"8px 10px",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginBottom:6}}>
+              <div style={{display:"flex",gap:2,background:"#ede8dc",borderRadius:8,padding:2,border:"1px solid #d4c9b5"}}>
+                {ISSUE_TOOLS.map(t=>(
+                  <button key={t.id} title={t.label} onClick={()=>{setTool(t.id);setTextPos(null);}}
+                    style={{width:30,height:30,borderRadius:6,border:"none",cursor:"pointer",
+                      background:tool===t.id?"#8b5e3c":"transparent",
+                      color:tool===t.id?"#faf7f2":"#5c4f3a",
+                      fontSize:t.id==='text'?11:13,fontWeight:700,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      transition:"all .12s"}}>
+                    {t.icon}
+                  </button>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:3,alignItems:"center"}}>
+                {ANN_COLORS.map(({c,l})=>(
+                  <button key={c} onClick={()=>setColor(c)} title={l}
+                    style={{width:20,height:20,borderRadius:"50%",border:`2.5px solid ${color===c?"#2c2416":"transparent"}`,
+                      background:c,cursor:"pointer",transition:"all .12s",
+                      boxShadow:color===c?`0 0 0 2px #faf7f2,0 0 0 4px ${c}`:"0 1px 3px rgba(0,0,0,.15)",
+                      transform:color===c?"scale(1.2)":"scale(1)"}}/>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:2,background:"#ede8dc",borderRadius:7,padding:2,border:"1px solid #d4c9b5"}}>
+                {ANN_SIZES.map(s=>(
+                  <button key={s.v} onClick={()=>setSize(s.v)}
+                    style={{padding:"3px 8px",borderRadius:5,border:"none",cursor:"pointer",fontSize:10,fontWeight:700,
+                      background:size===s.v?"#8b5e3c":"transparent",color:size===s.v?"#faf7f2":"#5c4f3a",transition:"all .12s"}}>
+                    {s.l}
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>setAnnots(a=>a.slice(0,-1))} disabled={annots.length===0}
+                style={{padding:"4px 9px",borderRadius:7,border:"1px solid #d4c9b5",background:"#faf7f2",color:annots.length===0?"#c4b89f":"#5c4f3a",cursor:annots.length===0?"default":"pointer",fontSize:11,fontWeight:600}}>
+                ↩
+              </button>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <svg width="40" height="18"><line x1="4" y1="9" x2="36" y2="9" stroke={color} strokeWidth={size} strokeLinecap="round"/></svg>
+              <span style={{fontSize:10,color:"#8a7660"}}>{ISSUE_TOOLS.find(t=>t.id===tool)?.label}</span>
+            </div>
+          </div>
+
+          {/* Canvas */}
+          <div style={{position:"relative",borderRadius:9,overflow:"hidden",border:"1px solid #d4c9b5",cursor:cursorStyle,userSelect:"none",background:"#ede8dc"}}
+            onMouseDown={e=>{e.preventDefault();onDown(e.clientX,e.clientY);}}
+            onMouseMove={e=>onMove(e.clientX,e.clientY)}
+            onMouseUp={e=>onUp(e.clientX,e.clientY)}
+            onMouseLeave={()=>{if(isDown)onUp(0,0);}}
+            onTouchStart={e=>{e.preventDefault();const t=e.touches[0];onDown(t.clientX,t.clientY);}}
+            onTouchMove={e=>{e.preventDefault();const t=e.touches[0];onMove(t.clientX,t.clientY);}}
+            onTouchEnd={e=>{e.preventDefault();const t=e.changedTouches[0];onUp(t.clientX,t.clientY);}}>
+            <img ref={imgRef} src={dataUrl} alt="annotate" style={{width:"100%",display:"block",maxHeight:340,objectFit:"contain",userSelect:"none",pointerEvents:"none"}} draggable={false}/>
+            <canvas ref={canvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none"}}/>
+            {!isDown&&annots.length===0&&!textPos&&(
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <div style={{background:"rgba(250,247,242,.9)",borderRadius:9,padding:"8px 16px",border:"1px solid #d4c9b5",fontSize:13,color:"#8b5e3c",fontWeight:600}}>
+                  {tool==='text'?"Click to place text":"Click & drag to annotate"}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Text input popup */}
+          {textPos&&(
+            <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center",background:"#f0e6d8",borderRadius:9,padding:"10px 12px",border:"1px solid #c4b89f"}}>
+              <span style={{fontSize:12,color:"#8b5e3c",fontWeight:600,whiteSpace:"nowrap"}}>📝 Text:</span>
+              <input autoFocus className="inp" value={textInput} onChange={e=>setTextInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter')textConfirm();if(e.key==='Escape'){setTextPos(null);setTextInput('');}}}
+                placeholder="Label…" style={{flex:1,margin:0}}/>
+              <Btn size="sm" onClick={textConfirm}>Add</Btn>
+              <Btn size="sm" variant="ghost" onClick={()=>{setTextPos(null);setTextInput('');}}>✕</Btn>
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:8,marginTop:10,justifyContent:"flex-end"}}>
+            <Btn variant="ghost" size="sm" onClick={onClose}>Discard</Btn>
+            <Btn size="sm" variant="success" disabled={annots.length===0||saving} onClick={handleSave}>
+              {saving?"Saving…":"✓ Save Annotation"}
+            </Btn>
+          </div>
+        </div>
       );
     }
 
